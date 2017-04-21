@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 	_ "net/http/pprof"
+	"time"
 )
 
 //output
@@ -23,14 +24,29 @@ var (
 	host   string
 	client *goredis.Client
 	closeChan chan struct{}
+	data map[statistics]int64
+	monitorDara map[statistics]int64
 )
+
+type statistics struct {
+	index 	string  `数据库号`
+	ip 	string  `客户端ip`
+	option	string  `操作命令`
+	param 	[3]string  `参数`
+}
 
 func main() {
 	config := readConfig()
+	for k,v := range config{
+		log.Println(k,":",v)
+	}
 	host = config["host"]
 	if host == "" {
 		log.Fatalln("请配置host")
 	}
+	data = make(map[statistics]int64)
+	monitorDara = make(map[statistics]int64)
+	//indexs := config["index"]
 
 	closeChan = make(chan struct{})
 
@@ -42,6 +58,18 @@ func main() {
 func start(resp http.ResponseWriter,req *http.Request)  {
 	connect()
 	go monitor()
+	ticker := time.NewTicker(time.Minute * 1)
+	go func() {
+		for _ = range ticker.C {
+			for s,v := range data{
+				log.Println("daIndex:",s.index)
+				log.Println("		ip:",s.ip)
+				log.Println("			option:",s.option)
+				log.Println("				count:",v)
+			}
+
+		}
+	}()
 }
 
 func stop(resp http.ResponseWriter,req *http.Request)  {
@@ -111,6 +139,28 @@ func readConfig() map[string]string {
 	return m
 }
 
+func statisticsLog(logs string)  {
+	l1 := strings.Split(logs," ")
+	if len(l1) < 4{
+		return
+	}
+	var s statistics
+	s.index = string([]rune(l1[1])[1:])
+	s.ip = string([]rune(l1[2])[0:len([]rune(l1[2]))-1])
+
+	//1492767994.380260 [8 172.16.203.205:57371] "HSET" "/dubbo/com.tinet.crm.rpc.WorkOrderRpcService/consumers" "consumer://172.16.203.205/com.tinet.crm.rpc.WorkOrderRpcService?application=boss&application.version=1.0.0&category=consumers&check=false&default.check=false&default.version=1.0.0&dubbo=2.8.4&interface=com.tinet.crm.rpc.WorkOrderRpcService&methods=notice&pid=3809&revision=1.0.1&side=consumer&timestamp=1488941004252" "1492768053983"
+	s.option = l1[3]
+	if len(l1) > 4{
+		s.param = [3]string{}
+		for i:=3;i<len(l1)&&i<6;i++ {
+			s.param[i-3] = l1[i]
+		}
+	}
+
+	data[s] = data[s] + 1
+	//log.Println(s)
+}
+
 func printReply(level int, reply interface{}, mode int) {
 	switch mode {
 	case stdMode:
@@ -161,8 +211,9 @@ func printRawReply(level int, reply interface{}) {
 	case string:
 		{
 			//if strings.Contains(reply, "HSET") {
-			fmt.Printf("%s", reply)
-			fmt.Println()
+			//fmt.Printf("%s", reply)
+			//fmt.Println()
+			statisticsLog(reply)
 			//}
 		}
 	case []byte:
