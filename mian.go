@@ -11,6 +11,9 @@ import (
 	"strings"
 	_ "net/http/pprof"
 	"time"
+	"strconv"
+	"regexp"
+	"encoding/json"
 )
 
 //output
@@ -24,8 +27,14 @@ var (
 	host   string
 	client *goredis.Client
 	closeChan chan struct{}
+	stopTicket chan int
 	data map[statistics]int64
-	monitorDara map[statistics]int64
+	monitorDara map[statistics]*tally
+	saveIndex int
+	regexps string
+	reg *regexp.Regexp
+	lock chan int
+	started bool
 )
 
 type statistics struct {
@@ -33,6 +42,11 @@ type statistics struct {
 	ip 	string  `客户端ip`
 	option	string  `操作命令`
 	param 	[3]string  `参数`
+}
+
+type tally struct {
+	entity bool
+	count int64
 }
 
 func main() {
@@ -44,32 +58,135 @@ func main() {
 	if host == "" {
 		log.Fatalln("请配置host")
 	}
+	sIndex := config["saveToIndex"]
+	if sIndex == ""{
+		sIndex = "0"
+	}
+	saveIndex,_ = strconv.Atoi(sIndex)
+	log.Println("saveIndex",saveIndex)
+	regexps = config["regexp"]
+	if regexps!= ""{
+		reg = regexp.MustCompile(regexps)
+	}
+	httpPort := config["httpPort"]
+	if httpPort == ""{
+		httpPort = "8080"
+	}
+	buildMonitorData(config)//初始化需要监控的数据
 	data = make(map[statistics]int64)
-	monitorDara = make(map[statistics]int64)
-	//indexs := config["index"]
-
+	stopTicket = make(chan int)
 	closeChan = make(chan struct{})
-
+	lock = make(chan int,1)
 	http.HandleFunc("/start",start)
 	http.HandleFunc("/stop",stop)
-	http.ListenAndServe(":8080",nil)
+	http.ListenAndServe(":"+httpPort,nil)
+}
+
+func buildMonitorData(config map[string]string)  {
+	monitorDara = make(map[statistics]*tally)
+	var dbindexs []string
+	var ips []string
+	var options []string
+
+	indexs := config["index"]
+	if indexs != ""{
+		dbindexs = strings.Split(indexs,",")
+	}
+	if len(dbindexs)==0{//没配置index，默认统计所有
+		dbindexs = []string{"0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"}
+	}
+	is := config["ip"]
+	if is != ""{
+		ips = strings.Split(is,",")
+	}
+	ops := config["options"]
+
+	if ops != ""{
+		options = strings.Split(ops,",")
+	}
+
+	if ops == "" || len(options)==0{
+		log.Fatalln("请配置options,多个以,分开")
+	}
+
+	for _,index := range dbindexs{
+
+		if len(ips) == 0{
+			for _,option := range options {
+				var s statistics = statistics{}
+				s.index = index
+				s.option = option
+				monitorDara[s] = &tally{true,0}
+				log.Println("1",s)
+			}
+		}else {
+			for _,ip := range ips{
+
+				for _,option := range options {
+					var s statistics = statistics{}
+					s.index = index
+					s.ip = ip
+					s.option = option
+					monitorDara[s] = &tally{true,0}
+					//log.Println("2",s)
+				}
+
+			}
+		}
+
+	}
 }
 
 func start(resp http.ResponseWriter,req *http.Request)  {
+	defer func() {<-lock}()
+	lock <- 1
+	if started{
+		log.Println("mointor has start")
+		return
+	}
+	started = true
 	connect()
 	go monitor()
+	go saveStatistics()
+	log.Println("start monitor")
+}
+
+func saveStatistics()  {
 	ticker := time.NewTicker(time.Minute * 1)
-	go func() {
-		for _ = range ticker.C {
-			for s,v := range data{
+	for {
+		select {
+		case <-ticker.C:{
+			statises := []Statis{}
+			for s,v := range monitorDara{
 				log.Println("daIndex:",s.index)
 				log.Println("		ip:",s.ip)
 				log.Println("			option:",s.option)
 				log.Println("				count:",v)
+				if v.count > 0 {
+					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.count,10)})
+				}
 			}
-
+			sendSelect(client,saveIndex)
+			json,_:=json.Marshal(statises)
+			cmds := []string{"set","redis_statistics",string(json)}
+			SendCommand(cmds)
+			timeout := 1000*60*60
+			cmds = []string{"expire","redis_statistics",strconv.Itoa(timeout)}
+			SendCommand(cmds)
 		}
-	}()
+		case <-stopTicket :{
+			log.Println("stop ticker")
+			return
+		}
+		}
+	}
+}
+
+type Statis struct {
+	Dbindex string
+	Ip string
+	Option string
+	Count string
 }
 
 func stop(resp http.ResponseWriter,req *http.Request)  {
@@ -78,8 +195,15 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 			log.Println("stop err",err)
 		}
 	}()
+	defer func() {<-lock}()
+	lock <- 1
+	if !started{
+		log.Println("mointor has stopped")
+		return
+	}
+	started = false
 	closeChan <- struct{}{}
-	//stopChan <- struct{}{}
+	stopTicket <- 1
 	client.Close()
 }
 
@@ -88,7 +212,6 @@ func connect() {
 		addr := host
 		client = goredis.NewClient(addr, "")
 		client.SetMaxIdleConns(1)
-		//sendSelect(client, 6)
 	}
 }
 
@@ -113,6 +236,7 @@ func monitor() {
 			return
 		}
 	}
+
 }
 
 func readConfig() map[string]string {
@@ -134,7 +258,9 @@ func readConfig() map[string]string {
 		}
 		s := strings.TrimSpace(string(b))
 		kv := strings.Split(s, "=")
-		m[kv[0]] = kv[1]
+		if len(kv)==2{
+			m[kv[0]] = kv[1]
+		}
 	}
 	return m
 }
@@ -145,19 +271,47 @@ func statisticsLog(logs string)  {
 		return
 	}
 	var s statistics
-	s.index = string([]rune(l1[1])[1:])
-	s.ip = string([]rune(l1[2])[0:len([]rune(l1[2]))-1])
-
 	//1492767994.380260 [8 172.16.203.205:57371] "HSET" "/dubbo/com.tinet.crm.rpc.WorkOrderRpcService/consumers" "consumer://172.16.203.205/com.tinet.crm.rpc.WorkOrderRpcService?application=boss&application.version=1.0.0&category=consumers&check=false&default.check=false&default.version=1.0.0&dubbo=2.8.4&interface=com.tinet.crm.rpc.WorkOrderRpcService&methods=notice&pid=3809&revision=1.0.1&side=consumer&timestamp=1488941004252" "1492768053983"
-	s.option = l1[3]
-	if len(l1) > 4{
+	s.index = string([]rune(l1[1])[1:])
+	s.option = strings.Replace(l1[3],"\"","",-1)
+
+	defer func() {
+		if err:=recover();err!=nil{
+			log.Println("err",err)
+		}
+	}()
+	if mdata,ok := monitorDara[s];ok{
+		if len(l1) > 4{
+			for i:=3;i<len(l1)&&i<6;i++ {
+				var param string = l1[i]
+				if reg.FindString(param)!= ""{
+					mdata.count = mdata.count + 1
+					//log.Println("reg",param)
+					break
+				}
+			}
+		}
+	}
+	s.ip = string([]rune(l1[2])[0:len([]rune(l1[2]))-1])
+	if mdata,ok := monitorDara[s];ok{
+		if len(l1) > 4{
+			for i:=3;i<len(l1)&&i<6;i++ {
+				var param string = l1[i]
+				if reg.FindString(param)!= ""{
+					mdata.count = mdata.count + 1
+					//log.Println("with ip reg",param)
+					break
+				}
+			}
+		}
+	}
+	/*if len(l1) > 4{  //set param
 		s.param = [3]string{}
 		for i:=3;i<len(l1)&&i<6;i++ {
 			s.param[i-3] = l1[i]
 		}
-	}
-
-	data[s] = data[s] + 1
+	}*/
+	//data[s] = data[s] + 1
 	//log.Println(s)
 }
 
@@ -210,11 +364,7 @@ func printRawReply(level int, reply interface{}) {
 		fmt.Printf("%d --------1", reply)
 	case string:
 		{
-			//if strings.Contains(reply, "HSET") {
-			//fmt.Printf("%s", reply)
-			//fmt.Println()
 			statisticsLog(reply)
-			//}
 		}
 	case []byte:
 		fmt.Printf("%s --------2", reply)
@@ -274,4 +424,24 @@ func sendAuth(client *goredis.Client, passwd string) error {
 	}
 
 	return nil
+}
+
+func SendCommand(cmds []string) {
+	if len(cmds) == 0 {
+		return
+	}
+	args := make([]interface{}, len(cmds[1:]))
+	for i := range args {
+		args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+	}
+
+	cmd := strings.ToLower(cmds[0])
+
+	r, err := client.Do(cmd, args...)
+
+	if err != nil {
+		log.Printf("(error) %s", err.Error())
+	} else {
+		log.Println(r)
+	}
 }
