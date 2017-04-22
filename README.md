@@ -31,7 +31,7 @@ http://172.16.203.194:8080/stop
 
 ```
 
-监控会将结果以json格式存入指定数据库中，key为“redis_statistics”
+监控会将结果以json格式存入指定数据库中，key为“redis_statistics”，数据每分钟同步一次，停止监控空后数据有效期为1小时
 
 例：
 
