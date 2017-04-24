@@ -46,7 +46,9 @@ type statistics struct {
 
 type tally struct {
 	entity bool
-	count int64
+	//option string `命令`
+	totalCount int64 `总数`
+	count int64  `根据正则表达式匹配总数`
 }
 
 func main() {
@@ -116,7 +118,7 @@ func buildMonitorData(config map[string]string)  {
 				var s statistics = statistics{}
 				s.index = index
 				s.option = option
-				monitorDara[s] = &tally{true,0}
+				monitorDara[s] = &tally{true,0,0}
 				log.Println("1",s)
 			}
 		}else {
@@ -127,7 +129,7 @@ func buildMonitorData(config map[string]string)  {
 					s.index = index
 					s.ip = ip
 					s.option = option
-					monitorDara[s] = &tally{true,0}
+					monitorDara[s] = &tally{true,0,0}
 					//log.Println("2",s)
 				}
 
@@ -162,15 +164,15 @@ func saveStatistics()  {
 				log.Println("		ip:",s.ip)
 				log.Println("			option:",s.option)
 				log.Println("				count:",v)
-				if v.count > 0 {
-					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.count,10)})
+				if v.totalCount > 0 {
+					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.totalCount,10),strconv.FormatInt(v.count,10)})
 				}
 			}
 			sendSelect(client,saveIndex)
 			json,_:=json.Marshal(statises)
 			cmds := []string{"set","redis_statistics",string(json)}
 			SendCommand(cmds)
-			timeout := 1000*60*60
+			timeout := 60*60 //单位秒
 			cmds = []string{"expire","redis_statistics",strconv.Itoa(timeout)}
 			SendCommand(cmds)
 		}
@@ -186,6 +188,7 @@ type Statis struct {
 	Dbindex string
 	Ip string
 	Option string
+	TotalCount string
 	Count string
 }
 
@@ -271,7 +274,6 @@ func statisticsLog(logs string)  {
 		return
 	}
 	var s statistics
-	//1492767994.380260 [8 172.16.203.205:57371] "HSET" "/dubbo/com.tinet.crm.rpc.WorkOrderRpcService/consumers" "consumer://172.16.203.205/com.tinet.crm.rpc.WorkOrderRpcService?application=boss&application.version=1.0.0&category=consumers&check=false&default.check=false&default.version=1.0.0&dubbo=2.8.4&interface=com.tinet.crm.rpc.WorkOrderRpcService&methods=notice&pid=3809&revision=1.0.1&side=consumer&timestamp=1488941004252" "1492768053983"
 	s.index = string([]rune(l1[1])[1:])
 	s.option = strings.Replace(l1[3],"\"","",-1)
 
@@ -281,11 +283,13 @@ func statisticsLog(logs string)  {
 		}
 	}()
 	if mdata,ok := monitorDara[s];ok{
+		mdata.totalCount = mdata.totalCount + 1  //记录操作总数
 		if len(l1) > 4{
 			for i:=3;i<len(l1)&&i<6;i++ {
 				var param string = l1[i]
-				if reg.FindString(param)!= ""{
+				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
+					log.Println("regexp:",finsStr)
 					//log.Println("reg",param)
 					break
 				}
@@ -294,11 +298,13 @@ func statisticsLog(logs string)  {
 	}
 	s.ip = string([]rune(l1[2])[0:len([]rune(l1[2]))-1])
 	if mdata,ok := monitorDara[s];ok{
+		mdata.totalCount = mdata.totalCount + 1  //记录操作总数
 		if len(l1) > 4{
 			for i:=3;i<len(l1)&&i<6;i++ {
 				var param string = l1[i]
-				if reg.FindString(param)!= ""{
+				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
+					log.Println("regexp:",finsStr)
 					//log.Println("with ip reg",param)
 					break
 				}
