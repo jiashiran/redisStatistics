@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 	"log"
+	"os"
 )
 
 type PoolConn struct {
@@ -55,16 +56,16 @@ func NewClient(addr string, password string) *Client {
 	c := new(Client)
 
 	c.addr = addr
-	c.maxIdleConns = 4
-	c.readBufferSize = 1024
-	c.writeBufferSize = 1024
+	c.maxIdleConns = 10
+	c.readBufferSize = 2048
+	c.writeBufferSize = 2048
 	c.password = password
 
 	c.conns = list.New()
 	c.quit = make(chan struct{})
 
 	c.wg.Add(1)
-	go c.onCheck()
+	go c.onCheck() //ping不通会关闭链接，导致报错
 
 	return c
 }
@@ -101,7 +102,9 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 			if e, ok := err.(*net.OpError); ok && strings.Contains(e.Error(), "use of closed network connection") {
 				//send to a closed connection, try again
 				log.Panic(err)
-				continue
+				os.Exit(-1)
+				//continue
+				return nil,err
 			}
 			c.put(co)
 			return nil, err
@@ -238,13 +241,14 @@ func (c *Client) checkIdle() {
 	_, err := co.Do("PING")
 	if err != nil {
 		co.Close()
+
 	} else {
 		c.put(co)
 	}
 }
 
 func (c *Client) onCheck() {
-	t := time.NewTicker(3 * time.Second)
+	t := time.NewTicker(10 * time.Second)
 
 	defer func() {
 		t.Stop()

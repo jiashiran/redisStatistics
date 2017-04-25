@@ -41,6 +41,8 @@ var (
 	logger *log.Logger
 	httpPort string
 	config map[string]string
+	startTime string
+	endTime string
 )
 
 type statistics struct {
@@ -198,6 +200,9 @@ func start(resp http.ResponseWriter,req *http.Request)  {
 	go monitor()
 	go saveStatistics()
 	logger.Println("start monitor")
+	if startTime == ""{
+		startTime = time.Now().Format("2006-01-02 15:04:05")
+	}
 }
 
 func saveStatistics()  {
@@ -216,7 +221,8 @@ func saveStatistics()  {
 				}
 			}
 			sendSelect(client,saveIndex)
-			json,_:=json.Marshal(statises)
+			body := JsonBody{StartTime:startTime,EndTime:time.Now().Format("2006-01-02 15:04:05"),Regexp:regexps,Data:statises}
+			json,_:=json.Marshal(body)
 			cmds := []string{"set","redis_statistics",string(json)}
 			SendCommand(cmds)
 
@@ -227,6 +233,13 @@ func saveStatistics()  {
 		}
 		}
 	}
+}
+
+type JsonBody struct {
+	StartTime string
+	EndTime string
+	Regexp string
+	Data []Statis
 }
 
 type Statis struct {
@@ -424,8 +437,10 @@ func printStdReply(level int, reply interface{}) {
 				logger.Printf("\n")
 			}
 		}
-	default:
-		logger.Printf("Unknown reply type: %+v", reply)
+	default:{
+		logger.Printf("Unknown reply type 0: %+v", reply)
+		os.Exit(0)
+	}
 	}
 }
 
@@ -454,8 +469,14 @@ func printRawReply(level int, reply interface{}) {
 				logger.Println("--------5")
 			}
 		}
-	default:
-		logger.Printf("Unknown reply type: %+v", reply)
+	case error:{
+		logger.Println("printRawReply error:",reply)
+	}
+	default:{
+		logger.Printf("Unknown reply type 1: %+v", reply)
+		os.Exit(0)
+	}
+
 	}
 }
 
