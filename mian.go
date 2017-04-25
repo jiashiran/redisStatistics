@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"github.com/holys/goredis"
-	"fmt"
 	"net/http"
 	"os"
 	"bufio"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"regexp"
 	"encoding/json"
+	"fmt"
 )
 
 //output
@@ -36,6 +36,9 @@ var (
 	lock chan int
 	started bool
 	debug bool
+	logger *log.Logger
+	httpPort string
+	config map[string]string
 )
 
 type statistics struct {
@@ -53,9 +56,36 @@ type tally struct {
 }
 
 func main() {
-	config := readConfig()
+	buildMonitorData(config)//初始化需要监控的数据
+	data = make(map[statistics]int64)
+	stopTicket = make(chan int)
+	closeChan = make(chan struct{})
+	lock = make(chan int,1)
+	http.HandleFunc("/start",start)
+	http.HandleFunc("/stop",stop)
+	http.ListenAndServe(":"+httpPort,nil)
+}
+
+func init()  {
+	config = readConfig()
+	logFlag := config["logFlag"]
+
+	// 创建一个日志对象
+	if logFlag != "" && logFlag == "file"{
+		// 定义一个文件
+		fileName := "redis_statistics.log"
+		logFile,err  := os.Create(fileName)
+		//defer logFile.Close()
+		if err != nil {
+			log.Println("open file error !")
+		}
+		logger = log.New(logFile,"[info]",log.LstdFlags)
+	}else {
+		logger = log.New(os.Stdout,"[info]",log.LstdFlags)
+	}
+
 	for k,v := range config{
-		log.Println(k,":",v)
+		logger.Println(k,":",v)
 	}
 	host = config["host"]
 	if host == "" {
@@ -66,27 +96,20 @@ func main() {
 		sIndex = "0"
 	}
 	saveIndex,_ = strconv.Atoi(sIndex)
-	log.Println("saveIndex",saveIndex)
+	logger.Println("saveIndex",saveIndex)
 	regexps = config["regexp"]
 	if regexps!= ""{
 		reg = regexp.MustCompile(regexps)
 	}
-	httpPort := config["httpPort"]
+	httpPort = config["httpPort"]
 	if httpPort == ""{
 		httpPort = "8080"
 	}
-	isDebug := config["debug"]
-	if isDebug != "" && isDebug == "true"{
+
+	if logFlag != "" && logFlag == "debug"{
+		logger.SetPrefix("[debug]")
 		debug = true
 	}
-	buildMonitorData(config)//初始化需要监控的数据
-	data = make(map[statistics]int64)
-	stopTicket = make(chan int)
-	closeChan = make(chan struct{})
-	lock = make(chan int,1)
-	http.HandleFunc("/start",start)
-	http.HandleFunc("/stop",stop)
-	http.ListenAndServe(":"+httpPort,nil)
 }
 
 func buildMonitorData(config map[string]string)  {
@@ -124,7 +147,7 @@ func buildMonitorData(config map[string]string)  {
 				s.index = index
 				s.option = option
 				monitorDara[s] = &tally{true,0,0}
-				log.Println("1",s)
+				logger.Println("1",s)
 			}
 		}else {
 			for _,ip := range ips{
@@ -135,7 +158,7 @@ func buildMonitorData(config map[string]string)  {
 					s.ip = ip
 					s.option = option
 					monitorDara[s] = &tally{true,0,0}
-					//log.Println("2",s)
+					//logger.Println("2",s)
 				}
 
 			}
@@ -148,14 +171,14 @@ func start(resp http.ResponseWriter,req *http.Request)  {
 	defer func() {<-lock}()
 	lock <- 1
 	if started{
-		log.Println("mointor has start")
+		logger.Println("mointor has start")
 		return
 	}
 	started = true
 	connect()
 	go monitor()
 	go saveStatistics()
-	log.Println("start monitor")
+	logger.Println("start monitor")
 }
 
 func saveStatistics()  {
@@ -165,10 +188,10 @@ func saveStatistics()  {
 		case <-ticker.C:{
 			statises := []Statis{}
 			for s,v := range monitorDara{
-				log.Println("daIndex:",s.index)
-				log.Println("		ip:",s.ip)
-				log.Println("			option:",s.option)
-				log.Println("				count:",v)
+				logger.Println("daIndex:",s.index)
+				logger.Println("		ip:",s.ip)
+				logger.Println("			option:",s.option)
+				logger.Println("				count:",v)
 				if v.totalCount > 0 {
 					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.totalCount,10),strconv.FormatInt(v.count,10)})
 				}
@@ -180,7 +203,7 @@ func saveStatistics()  {
 
 		}
 		case <-stopTicket :{
-			log.Println("stop ticker")
+			logger.Println("stop ticker")
 			return
 		}
 		}
@@ -202,7 +225,7 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 	SendCommand(cmds)
 	defer func() {
 		if err:=recover() ; err != nil {
-			log.Println("stop err",err)
+			logger.Println("stop err",err)
 		}
 	}()
 	defer func() {
@@ -210,7 +233,7 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 	}()
 	lock <- 1
 	if !started{
-		log.Println("mointor has stopped")
+		logger.Println("mointor has stopped")
 		return
 	}
 	started = false
@@ -232,7 +255,7 @@ func monitor() {
 	stopChan := make(chan struct{})
 	err := client.Monitor(respChan, stopChan,closeChan)
 	if err != nil {
-		fmt.Printf("(error) %s\n", err.Error())
+		logger.Printf("(error) %s\n", err.Error())
 		return
 	}
 
@@ -242,9 +265,9 @@ func monitor() {
 		select {
 		case mr := <-respChan:
 			printReply(0, mr, mode)
-			//fmt.Printf("\n")
+			//logger.Printf("\n")
 		case <-stopChan:
-			fmt.Println("Error: Server closed the connection")
+			logger.Println("Error: Server closed the connection")
 			return
 		}
 	}
@@ -256,7 +279,7 @@ func readConfig() map[string]string {
 	file, err := os.Open("redis_statistics.conf")
 	defer file.Close()
 	if err != nil {
-		log.Println(err)
+		logger.Println(err)
 		return m
 	}
 	r := bufio.NewReader(file)
@@ -289,7 +312,7 @@ func statisticsLog(logs string)  {
 
 	defer func() {
 		if err:=recover();err!=nil{
-			log.Println("err",err)
+			logger.Println("err",err)
 		}
 	}()
 	if mdata,ok := monitorDara[s];ok{
@@ -300,9 +323,9 @@ func statisticsLog(logs string)  {
 				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
 					if debug {
-						log.Println("regexp:",finsStr)
+						logger.Println("regexp:",finsStr)
 					}
-					//log.Println("reg",param)
+					//logger.Println("reg",param)
 					break
 				}
 			}
@@ -317,9 +340,9 @@ func statisticsLog(logs string)  {
 				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
 					if debug {
-						log.Println("regexp:",finsStr)
+						logger.Println("regexp:",finsStr)
 					}
-					//log.Println("with ip reg",param)
+					//logger.Println("with ip reg",param)
 					break
 				}
 			}
@@ -332,7 +355,7 @@ func statisticsLog(logs string)  {
 		}
 	}*/
 	//data[s] = data[s] + 1
-	//log.Println(s)
+	//logger.Println(s)
 	if debug {
 		if len(l1) > 4{  //set param
 			s.param = [3]string{}
@@ -340,7 +363,7 @@ func statisticsLog(logs string)  {
 				s.param[i-3] = l1[i]
 			}
 		}
-		log.Println(s)
+		logger.Println(s)
 	}
 }
 
@@ -359,61 +382,61 @@ func printReply(level int, reply interface{}, mode int) {
 func printStdReply(level int, reply interface{}) {
 	switch reply := reply.(type) {
 	case int64:
-		fmt.Printf("(integer) %d", reply)
+		logger.Printf("(integer) %d", reply)
 	case string:
-		fmt.Printf("%s", reply)
+		logger.Printf("%s", reply)
 	case []byte:
-		fmt.Printf("%q", reply)
+		logger.Printf("%q", reply)
 	case nil:
-		fmt.Printf("(nil)")
+		logger.Printf("(nil)")
 	case goredis.Error:
-		fmt.Printf("(error) %s", string(reply))
+		logger.Printf("(error) %s", string(reply))
 	case []interface{}:
 		for i, v := range reply {
 			if i != 0 {
-				fmt.Printf("%s", strings.Repeat(" ", level*4))
+				logger.Printf("%s", strings.Repeat(" ", level*4))
 			}
 
 			s := fmt.Sprintf("%d) ", i+1)
-			fmt.Printf("%-4s", s)
+			logger.Printf("%-4s", s)
 
 			printStdReply(level+1, v)
 			if i != len(reply)-1 {
-				fmt.Printf("\n")
+				logger.Printf("\n")
 			}
 		}
 	default:
-		fmt.Printf("Unknown reply type: %+v", reply)
+		logger.Printf("Unknown reply type: %+v", reply)
 	}
 }
 
 func printRawReply(level int, reply interface{}) {
 	switch reply := reply.(type) {
 	case int64:
-		fmt.Printf("%d --------1", reply)
+		logger.Printf("%d --------1", reply)
 	case string:
 		{
 			statisticsLog(reply)
 		}
 	case []byte:
-		fmt.Printf("%s --------2", reply)
+		logger.Printf("%s --------2", reply)
 	case nil:
 		// do nothing
 	case goredis.Error:
-		fmt.Printf("%s\n --------3", string(reply))
+		logger.Printf("%s\n --------3", string(reply))
 	case []interface{}:
 		for i, v := range reply {
 			if i != 0 {
-				fmt.Printf("%s  --------4", strings.Repeat(" ", level*4))
+				logger.Printf("%s  --------4", strings.Repeat(" ", level*4))
 			}
 
 			printRawReply(level+1, v)
 			if i != len(reply)-1 {
-				fmt.Println("--------5")
+				logger.Println("--------5")
 			}
 		}
 	default:
-		fmt.Printf("Unknown reply type: %+v", reply)
+		logger.Printf("Unknown reply type: %+v", reply)
 	}
 }
 
@@ -424,12 +447,12 @@ func sendSelect(client *goredis.Client, index int) {
 	}
 	if index > 16 || index < 0 {
 		index = 0
-		fmt.Println("index out of range, should less than 16")
+		logger.Println("index out of range, should less than 16")
 	}
 	_, err := client.Do("SELECT", index)
-	fmt.Println("SELECT", index)
+	logger.Println("SELECT", index)
 	if err != nil {
-		fmt.Printf("%s\n", err.Error())
+		logger.Printf("%s\n", err.Error())
 	}
 }
 
@@ -441,13 +464,13 @@ func sendAuth(client *goredis.Client, passwd string) error {
 
 	resp, err := client.Do("AUTH", passwd)
 	if err != nil {
-		fmt.Printf("(error) %s\n", err.Error())
+		logger.Printf("(error) %s\n", err.Error())
 		return err
 	}
 
 	switch resp := resp.(type) {
 	case goredis.Error:
-		fmt.Printf("(error) %s\n", resp.Error())
+		logger.Printf("(error) %s\n", resp.Error())
 		return resp
 	}
 
@@ -468,8 +491,8 @@ func SendCommand(cmds []string) {
 	r, err := client.Do(cmd, args...)
 
 	if err != nil {
-		log.Printf("(error) %s", err.Error())
+		logger.Printf("(error) %s", err.Error())
 	} else {
-		log.Println(r)
+		logger.Println(r)
 	}
 }

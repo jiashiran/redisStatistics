@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"log"
 )
 
 type PoolConn struct {
@@ -99,7 +100,7 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 		if err != nil {
 			if e, ok := err.(*net.OpError); ok && strings.Contains(e.Error(), "use of closed network connection") {
 				//send to a closed connection, try again
-				time.Sleep(time.Second * 30)
+				log.Panic(err)
 				continue
 			}
 			c.put(co)
