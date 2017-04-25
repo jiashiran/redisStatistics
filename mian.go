@@ -35,6 +35,7 @@ var (
 	reg *regexp.Regexp
 	lock chan int
 	started bool
+	debug bool
 )
 
 type statistics struct {
@@ -74,6 +75,10 @@ func main() {
 	if httpPort == ""{
 		httpPort = "8080"
 	}
+	isDebug := config["debug"]
+	if isDebug != "" && isDebug == "true"{
+		debug = true
+	}
 	buildMonitorData(config)//初始化需要监控的数据
 	data = make(map[statistics]int64)
 	stopTicket = make(chan int)
@@ -104,7 +109,7 @@ func buildMonitorData(config map[string]string)  {
 	ops := config["options"]
 
 	if ops != ""{
-		options = strings.Split(ops,",")
+		options = strings.Split(strings.ToLower(ops),",")
 	}
 
 	if ops == "" || len(options)==0{
@@ -172,9 +177,7 @@ func saveStatistics()  {
 			json,_:=json.Marshal(statises)
 			cmds := []string{"set","redis_statistics",string(json)}
 			SendCommand(cmds)
-			timeout := 60*60 //单位秒
-			cmds = []string{"expire","redis_statistics",strconv.Itoa(timeout)}
-			SendCommand(cmds)
+
 		}
 		case <-stopTicket :{
 			log.Println("stop ticker")
@@ -193,12 +196,18 @@ type Statis struct {
 }
 
 func stop(resp http.ResponseWriter,req *http.Request)  {
+	sendSelect(client,saveIndex)
+	timeout := 60*60 //单位秒
+	cmds := []string{"expire","redis_statistics",strconv.Itoa(timeout)}
+	SendCommand(cmds)
 	defer func() {
 		if err:=recover() ; err != nil {
 			log.Println("stop err",err)
 		}
 	}()
-	defer func() {<-lock}()
+	defer func() {
+		<-lock
+	}()
 	lock <- 1
 	if !started{
 		log.Println("mointor has stopped")
@@ -269,6 +278,7 @@ func readConfig() map[string]string {
 }
 
 func statisticsLog(logs string)  {
+	logs = strings.ToLower(logs)
 	l1 := strings.Split(logs," ")
 	if len(l1) < 4{
 		return
@@ -289,7 +299,9 @@ func statisticsLog(logs string)  {
 				var param string = l1[i]
 				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
-					log.Println("regexp:",finsStr)
+					if debug {
+						log.Println("regexp:",finsStr)
+					}
 					//log.Println("reg",param)
 					break
 				}
@@ -304,7 +316,9 @@ func statisticsLog(logs string)  {
 				var param string = l1[i]
 				if finsStr :=reg.FindString(param); finsStr!= ""{
 					mdata.count = mdata.count + 1
-					log.Println("regexp:",finsStr)
+					if debug {
+						log.Println("regexp:",finsStr)
+					}
 					//log.Println("with ip reg",param)
 					break
 				}
@@ -319,6 +333,15 @@ func statisticsLog(logs string)  {
 	}*/
 	//data[s] = data[s] + 1
 	//log.Println(s)
+	if debug {
+		if len(l1) > 4{  //set param
+			s.param = [3]string{}
+			for i:=3;i<len(l1)&&i<6;i++ {
+				s.param[i-3] = l1[i]
+			}
+		}
+		log.Println(s)
+	}
 }
 
 func printReply(level int, reply interface{}, mode int) {
@@ -405,7 +428,6 @@ func sendSelect(client *goredis.Client, index int) {
 	}
 	_, err := client.Do("SELECT", index)
 	fmt.Println("SELECT", index)
-	_, err = client.Do("set", "test", "111")
 	if err != nil {
 		fmt.Printf("%s\n", err.Error())
 	}

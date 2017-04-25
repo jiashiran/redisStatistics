@@ -99,6 +99,7 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 		if err != nil {
 			if e, ok := err.(*net.OpError); ok && strings.Contains(e.Error(), "use of closed network connection") {
 				//send to a closed connection, try again
+				time.Sleep(time.Second * 30)
 				continue
 			}
 			c.put(co)
