@@ -128,7 +128,7 @@ func info(resp http.ResponseWriter,req *http.Request)  {
 	}
 	//value := reflect.ValueOf(r)
 	//logger.Println(value)
-	io.WriteString(resp,fmt.Sprintf("%s) ", r))
+	io.WriteString(resp,fmt.Sprintf("%s", r))
 }
 
 func buildMonitorData(config map[string]string)  {
