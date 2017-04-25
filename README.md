@@ -34,6 +34,7 @@ go build -o redisStatistics-mac-amd64
 | regexp      | 可选   | 操作参数匹配的正则表达式，不配置统计所有           | provider            |
 | saveToIndex | 可选   | 统计结果保存的redis数据库，不配置默认为0        | 2                   |
 | httpPort    | 可选   | 控制打开或关闭监控的rest接口的端口，不配置默认为8080 |                     |
+| logFlag    | 可选   | 日志模式，可配置info,debug,file，不配置默认为info,file模式日志输出到文件 |                     |
 
 
 
