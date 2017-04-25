@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"encoding/json"
 	"fmt"
+	"errors"
+	//"reflect"
 )
 
 //output
@@ -63,6 +65,7 @@ func main() {
 	lock = make(chan int,1)
 	http.HandleFunc("/start",start)
 	http.HandleFunc("/stop",stop)
+	http.HandleFunc("/info",info)
 	http.ListenAndServe(":"+httpPort,nil)
 }
 
@@ -110,6 +113,22 @@ func init()  {
 		logger.SetPrefix("[debug]")
 		debug = true
 	}
+}
+
+func info(resp http.ResponseWriter,req *http.Request)  {
+	if !started {
+		io.WriteString(resp,"未连接")
+		return
+	}
+	sendSelect(client,saveIndex)
+	cmds := []string{"get","redis_statistics"}
+	r,err := SendCommand(cmds)
+	if err != nil{
+		log.Println(err)
+	}
+	//value := reflect.ValueOf(r)
+	//logger.Println(value)
+	io.WriteString(resp,fmt.Sprintf("%s) ", r))
 }
 
 func buildMonitorData(config map[string]string)  {
@@ -477,9 +496,9 @@ func sendAuth(client *goredis.Client, passwd string) error {
 	return nil
 }
 
-func SendCommand(cmds []string) {
+func SendCommand(cmds []string) (interface{}, error) {
 	if len(cmds) == 0 {
-		return
+		return nil,errors.New("agrs is null")
 	}
 	args := make([]interface{}, len(cmds[1:]))
 	for i := range args {
@@ -493,6 +512,7 @@ func SendCommand(cmds []string) {
 	if err != nil {
 		logger.Printf("(error) %s", err.Error())
 	} else {
-		logger.Println(r)
+		//logger.Println(r)
 	}
+	return r,err
 }
