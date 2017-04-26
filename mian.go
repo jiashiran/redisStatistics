@@ -262,6 +262,7 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 	}()
 	defer func() {
 		<-lock
+		client = nil
 	}()
 	lock <- 1
 	if !started{
@@ -471,6 +472,7 @@ func printRawReply(level int, reply interface{}) {
 		}
 	case error:{
 		logger.Println("printRawReply error:",reply)
+		stop(nil,nil)
 	}
 	default:{
 		logger.Printf("Unknown reply type 1: %+v", reply)
