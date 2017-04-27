@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 	"log"
-	"os"
 )
 
 type PoolConn struct {
@@ -42,6 +41,7 @@ type Client struct {
 
 	quit chan struct{}
 	wg   sync.WaitGroup
+	logger *log.Logger
 }
 
 func getProto(addr string) string {
@@ -52,7 +52,7 @@ func getProto(addr string) string {
 	}
 }
 
-func NewClient(addr string, password string) *Client {
+func NewClient(addr string, password string,logger *log.Logger) *Client {
 	c := new(Client)
 
 	c.addr = addr
@@ -66,7 +66,7 @@ func NewClient(addr string, password string) *Client {
 
 	c.wg.Add(1)
 	go c.onCheck() //ping不通会关闭链接，导致报错
-
+	c.logger = logger
 	return c
 }
 
@@ -101,8 +101,6 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 		if err != nil {
 			if e, ok := err.(*net.OpError); ok && strings.Contains(e.Error(), "use of closed network connection") {
 				//send to a closed connection, try again
-				log.Panic(err)
-				os.Exit(-1)
 				//continue
 				return nil,err
 			}
@@ -189,16 +187,19 @@ func (c *Client) get() (co *Conn, err error) {
 	c.Lock()
 	if c.conns.Len() == 0 {
 		c.Unlock()
-
 		co, err = c.newConn(c.addr, c.password)
+		log.Println("new Con")
 	} else {
 		e := c.conns.Front()
 		co = e.Value.(*Conn)
 		c.conns.Remove(e)
-
+		c.logger.Println("use Con")
 		c.Unlock()
 	}
-
+	if co.closed == 1 {
+		c.logger.Println(" Con close use new con")
+		co, err = c.newConn(c.addr, c.password)
+	}
 	return
 }
 
