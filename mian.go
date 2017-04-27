@@ -203,6 +203,7 @@ func start(resp http.ResponseWriter,req *http.Request)  {
 	if startTime == ""{
 		startTime = time.Now().Format("2006-01-02 15:04:05")
 	}
+	io.WriteString(resp,"已打开统计")
 }
 
 func saveStatistics()  {
@@ -257,12 +258,13 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 	SendCommand(cmds)
 	defer func() {
 		if err:=recover() ; err != nil {
-			logger.Println("stop err",err)
+			logger.Println("stop info",err)
 		}
 	}()
 	defer func() {
 		<-lock
 		client = nil
+		io.WriteString(resp,"已关闭统计")
 	}()
 	lock <- 1
 	if !started{
