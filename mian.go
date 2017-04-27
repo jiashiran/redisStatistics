@@ -191,8 +191,9 @@ func buildMonitorData(config map[string]string)  {
 func start(resp http.ResponseWriter,req *http.Request)  {
 	defer func() {<-lock}()
 	lock <- 1
-	if started{
+	if started {
 		logger.Println("mointor has start")
+		io.WriteString(resp,"已打开统计")
 		return
 	}
 	started = true
@@ -251,7 +252,53 @@ type Statis struct {
 	Count string
 }
 
+func startCon()  {
+	defer func() {<-lock}()
+	lock <- 1
+	if started {
+		logger.Println("mointor has start")
+		return
+	}
+	started = true
+	connect()
+	go monitor()
+	go saveStatistics()
+	logger.Println("start monitor")
+	if startTime == ""{
+		startTime = time.Now().Format("2006-01-02 15:04:05")
+	}
+}
+func stopCon()  {
+	if !started {
+		logger.Println("mointor has stopped")
+		return
+	}
+	sendSelect(client,saveIndex)
+	timeout := 60*60 //单位秒
+	cmds := []string{"expire","redis_statistics",strconv.Itoa(timeout)}
+	SendCommand(cmds)
+	defer func() {
+		if err:=recover() ; err != nil {
+			logger.Println("stop info",err)
+		}
+	}()
+	defer func() {
+		<-lock
+		client = nil
+	}()
+	lock <- 1
+	started = false
+	closeChan <- struct{}{}
+	stopTicket <- 1
+	client.Close()
+}
+
 func stop(resp http.ResponseWriter,req *http.Request)  {
+	if !started{
+		logger.Println("mointor has stopped")
+		io.WriteString(resp,"已关闭统计")
+		return
+	}
 	sendSelect(client,saveIndex)
 	timeout := 60*60 //单位秒
 	cmds := []string{"expire","redis_statistics",strconv.Itoa(timeout)}
@@ -267,10 +314,6 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 		io.WriteString(resp,"已关闭统计")
 	}()
 	lock <- 1
-	if !started{
-		logger.Println("mointor has stopped")
-		return
-	}
 	started = false
 	closeChan <- struct{}{}
 	stopTicket <- 1
@@ -280,7 +323,7 @@ func stop(resp http.ResponseWriter,req *http.Request)  {
 func connect() {
 	if client == nil {
 		addr := host
-		client = goredis.NewClient(addr, "")
+		client = goredis.NewClient(addr, "",logger)
 		client.SetMaxIdleConns(1)
 	}
 }
@@ -474,7 +517,12 @@ func printRawReply(level int, reply interface{}) {
 		}
 	case error:{
 		logger.Println("printRawReply error:",reply)
-		stop(nil,nil)
+		if strings.Contains(reply.Error(),"use of closed network connection"){
+			stopCon()
+			time.Sleep(time.Second * 10)
+			startCon()
+		}
+		//os.Exit(0)
 	}
 	default:{
 		logger.Printf("Unknown reply type 1: %+v", reply)
