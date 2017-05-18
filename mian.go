@@ -214,12 +214,20 @@ func saveStatistics()  {
 		case <-ticker.C:{
 			statises := []Statis{}
 			for s,v := range monitorDara{
-				logger.Println("daIndex:",s.index)
-				logger.Println("		ip:",s.ip)
-				logger.Println("			option:",s.option)
-				logger.Println("				count:",v)
+				if debug{
+					logger.Println("daIndex:",s.index)
+					logger.Println("		ip:",s.ip)
+					logger.Println("			option:",s.option)
+					logger.Println("				count:",v)
+				}
 				if v.totalCount > 0 {
 					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.totalCount,10),strconv.FormatInt(v.count,10)})
+					if !debug{
+						logger.Println("daIndex:",s.index)
+						logger.Println("		ip:",s.ip)
+						logger.Println("			option:",s.option)
+						logger.Println("				count:",v)
+					}
 				}
 			}
 			sendSelect(client,saveIndex)
@@ -483,13 +491,10 @@ func printRawReply(level int, reply interface{}) {
 	case error:{
 		logger.Println("printRawReply error:",reply)
 		if strings.Contains(reply.Error(),"use of closed network connection"){
-			//stopCon()
 			time.Sleep(time.Second * 10)
 			go monitor()
 			log.Println("重新建立连接")
-			//startCon()
 		}
-		//os.Exit(0)
 	}
 	default:{
 		logger.Printf("Unknown reply type 1: %+v", reply)

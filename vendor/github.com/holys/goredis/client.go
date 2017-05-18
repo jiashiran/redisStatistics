@@ -58,8 +58,8 @@ func NewClient(addr string, password string,logger *log.Logger) *Client {
 
 	c.addr = addr
 	c.maxIdleConns = 10
-	c.readBufferSize = 2048
-	c.writeBufferSize = 2048
+	c.readBufferSize = 20 * 1024 * 1024
+	c.writeBufferSize = 1024 * 1024
 	c.password = password
 
 	c.conns = list.New()
