@@ -156,7 +156,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 	p, err := br.ReadSlice('\n')
 	if err == bufio.ErrBufferFull {
 		//return nil, errors.New("long resp line")
-		log.Println("----------------------------------long resp line-------------------------------")
+		log.Println("---------------------------------long resp line-------------------------------")
 		return []byte{},nil
 	}
 	if err != nil {
