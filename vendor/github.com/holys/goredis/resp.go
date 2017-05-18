@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"log"
 )
 
 type Error string
@@ -154,7 +155,9 @@ func (resp *RespReader) ParseBulkTo(w io.Writer) error {
 func readLine(br *bufio.Reader) ([]byte, error) {
 	p, err := br.ReadSlice('\n')
 	if err == bufio.ErrBufferFull {
-		return nil, errors.New("long resp line")
+		//return nil, errors.New("long resp line")
+		log.Println("----------------------------------long resp line-------------------------------")
+		return []byte{},nil
 	}
 	if err != nil {
 		return nil, err

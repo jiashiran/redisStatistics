@@ -19,7 +19,6 @@ func (c *PoolConn) Close() {
 	if c.Conn.isClosed() {
 		return
 	}
-
 	c.c.put(c.Conn)
 }
 
@@ -42,6 +41,8 @@ type Client struct {
 	quit chan struct{}
 	wg   sync.WaitGroup
 	logger *log.Logger
+
+	closed bool
 }
 
 func getProto(addr string) string {
@@ -63,7 +64,7 @@ func NewClient(addr string, password string,logger *log.Logger) *Client {
 
 	c.conns = list.New()
 	c.quit = make(chan struct{})
-
+	c.closed = false
 	c.wg.Add(1)
 	go c.onCheck() //ping不通会关闭链接，导致报错
 	c.logger = logger
@@ -118,9 +119,15 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},closeChan chan struct{}) error {
 	var co *Conn
 	var err error
-
-	co, err = c.get()
+	if c == nil || c.addr == ""{
+		log.Println("client 已关闭")
+		return nil
+	}
+	c.closed = false
+	co, err = c.newConn(c.addr, c.password)//改造，监控自己创建连接，连接断开后重新创建
+	//co, err = c.get()//old code
 	if err != nil {
+		log.Println("Monitor create conn error,",err)
 		return err
 	}
 
@@ -129,9 +136,10 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 	}
 
 	go func() {
-		defer func() {
+		/*defer func() {
 			c.put(co)
-		}()
+		}()*/
+		defer co.Close()
 		for {
 			select {
 			case <- closeChan:{
@@ -149,10 +157,16 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 					}
 					respChan <- err
 				}
+				if c == nil || c.closed {
+					stopChan <- struct{}{}
+					return
+				}
 				respChan <- resp
 			}
 			}
 		}
+
+
 	}()
 
 	return nil
@@ -164,12 +178,12 @@ func (c *Client) Close() {
 
 	close(c.quit)
 	c.wg.Wait()
-
+	c.closed = true
 	for c.conns.Len() > 0 {
 		e := c.conns.Front()
 		co := e.Value.(*Conn)
 		c.conns.Remove(e)
-
+		log.Println("close3")
 		co.Close()
 	}
 }
@@ -212,7 +226,7 @@ func (c *Client) put(conn *Conn) {
 		e := c.conns.Back()
 		co := e.Value.(*Conn)
 		c.conns.Remove(e)
-
+		log.Println("close2")
 		co.Close()
 	}
 
@@ -241,6 +255,7 @@ func (c *Client) checkIdle() {
 
 	_, err := co.Do("PING")
 	if err != nil {
+		log.Println("close1")
 		co.Close()
 
 	} else {
