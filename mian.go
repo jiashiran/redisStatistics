@@ -517,6 +517,12 @@ func printRawReply(level int, reply interface{}) {
 }
 
 func sendSelect(client *goredis.Client, index int) {
+	defer func() {
+		if err:=recover();err!=nil{
+			logger.Println("sendSelect.err,",err)
+			return
+		}
+	}()
 	if index == 0 {
 		// do nothing
 		return
