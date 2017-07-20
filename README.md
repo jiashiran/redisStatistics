@@ -64,9 +64,9 @@ http://172.16.203.194:8080/info
 
 ```
 {
-    "StartTime": "2017-04-25 17:06:30",            //统计开始时间
-    "EndTime": "2017-04-25 17:07:30",              //统计截止时间
-    "Regexp": "provider",                          //需要匹配正则表达式
+    "StartTime": "2017-04-25 17:06:30",                             //统计开始时间
+    "EndTime": "2017-04-25 17:07:30",                                //统计截止时间
+    "Regexp": "monitor;scheduler;queue_avalible_member;8000;queue",  //需要匹配正则表达式
     "Data": [
         {
             "Dbindex": "3",                              //数据库id
