@@ -34,7 +34,7 @@ var (
 	monitorDara map[statistics]*tally
 	saveIndex int
 	regexps string
-	reg *regexp.Regexp
+	reg []*regexp.Regexp
 	lock chan int
 	started bool
 	debug bool
@@ -55,7 +55,7 @@ type tally struct {
 	entity bool
 	//option string `命令`
 	totalCount int64 `总数`
-	count int64  `根据正则表达式匹配总数`
+	count map[string]int64  `根据正则表达式匹配总数`
 }
 
 func main() {
@@ -103,8 +103,13 @@ func init()  {
 	logger.Println("saveIndex",saveIndex)
 	regexps = config["regexp"]
 	if regexps!= ""{
-		reg = regexp.MustCompile(regexps)
+		regs := strings.Split(regexps,";")
+		reg = make([]*regexp.Regexp,0)
+		for _,r:=range regs{
+			reg = append(reg,regexp.MustCompile(r))
+		}
 	}
+	logger.Println("regexps:",reg)
 	httpPort = config["httpPort"]
 	if httpPort == ""{
 		httpPort = "8080"
@@ -166,7 +171,7 @@ func buildMonitorData(config map[string]string)  {
 				var s statistics = statistics{}
 				s.index = index
 				s.option = option
-				monitorDara[s] = &tally{true,0,0}
+				monitorDara[s] = &tally{true,0,make(map[string]int64)}
 				logger.Println("1",s)
 			}
 		}else {
@@ -177,7 +182,7 @@ func buildMonitorData(config map[string]string)  {
 					s.index = index
 					s.ip = ip
 					s.option = option
-					monitorDara[s] = &tally{true,0,0}
+					monitorDara[s] = &tally{true,0,make(map[string]int64)}
 					//logger.Println("2",s)
 				}
 
@@ -221,7 +226,7 @@ func saveStatistics()  {
 					logger.Println("				count:",v)
 				}
 				if v.totalCount > 0 {
-					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.totalCount,10),strconv.FormatInt(v.count,10)})
+					statises = append(statises,Statis{s.index,s.ip,s.option,strconv.FormatInt(v.totalCount,10),v.count})
 					if !debug{
 						logger.Println("daIndex:",s.index)
 						logger.Println("		ip:",s.ip)
@@ -257,7 +262,7 @@ type Statis struct {
 	Ip string
 	Option string
 	TotalCount string
-	Count string
+	Count map[string]int64
 }
 
 func stop(resp http.ResponseWriter,req *http.Request)  {
@@ -371,13 +376,17 @@ func statisticsLog(logs string)  {
 		if len(l1) > 4{
 			for i:=3;i<len(l1)&&i<6;i++ {
 				var param string = l1[i]
-				if finsStr :=reg.FindString(param); finsStr!= ""{
-					mdata.count = mdata.count + 1
-					if debug {
-						logger.Println("regexp:",finsStr)
+				for _,rege:=range reg{
+					//logger.Println(rege,param)
+					if finsStr := rege.FindString(param); finsStr!= ""{
+						count := mdata.count[rege.String()]
+						mdata.count[rege.String()] = count + 1
+						if debug {
+							logger.Println("regexp:",finsStr)
+						}
+						//logger.Println("reg",param)
+						break
 					}
-					//logger.Println("reg",param)
-					break
 				}
 			}
 		}
@@ -388,13 +397,16 @@ func statisticsLog(logs string)  {
 		if len(l1) > 4{
 			for i:=3;i<len(l1)&&i<6;i++ {
 				var param string = l1[i]
-				if finsStr :=reg.FindString(param); finsStr!= ""{
-					mdata.count = mdata.count + 1
-					if debug {
-						logger.Println("regexp:",finsStr)
+				for _,rege:=range reg{
+					if finsStr := rege.FindString(param); finsStr!= ""{
+						count := mdata.count[rege.String()]
+						mdata.count[rege.String()] = count + 1
+						if debug {
+							logger.Println("regexp:",finsStr)
+						}
+						//logger.Println("reg",param)
+						break
 					}
-					//logger.Println("with ip reg",param)
-					break
 				}
 			}
 		}
