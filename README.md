@@ -73,7 +73,7 @@ http://172.16.203.194:8080/info
             "Ip": "",                                      //操作请求来源ip
             "Option": "hset",                              //操作命令
             "TotalCount": "2",                              //操作命令总次数
-            "Count":{                                      //用正则表达式匹配命令命中，操作次数
+            "Regexps":{                                      //用正则表达式匹配命令命中，操作次数
                             "monitor":104,                 //匹配表达式：命中次数
                             "queue":156
                      }
@@ -83,7 +83,7 @@ http://172.16.203.194:8080/info
             "Ip": "",
             "Option": "hset",
             "TotalCount": "6",
-             "Count":{
+             "Regexps":{
 
                       }
         },
@@ -92,7 +92,7 @@ http://172.16.203.194:8080/info
             "Ip": "",
             "Option": "hset",
             "TotalCount": "26",
-             "Count":{
+             "Regexps":{
                             "8000":57
                         }
         }

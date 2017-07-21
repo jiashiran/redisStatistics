@@ -262,7 +262,7 @@ type Statis struct {
 	Ip string
 	Option string
 	TotalCount string
-	Count map[string]int64
+	Regexps map[string]int64
 }
 
 func stop(resp http.ResponseWriter,req *http.Request)  {
