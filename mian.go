@@ -42,6 +42,7 @@ var (
 	httpPort string
 	config map[string]string
 	startTime string
+	operateSum int64
 )
 
 type statistics struct {
@@ -236,7 +237,12 @@ func saveStatistics()  {
 				}
 			}
 			sendSelect(client,saveIndex)
-			body := JsonBody{StartTime:startTime,EndTime:time.Now().Format("2006-01-02 15:04:05"),Regexp:regexps,Data:statises}
+			body := JsonBody{
+				StartTime:startTime,
+				EndTime:time.Now().Format("2006-01-02 15:04:05"),
+				OperateSumCount:operateSum,
+				Regexp:regexps,Data:statises,
+				}
 			json,_:=json.Marshal(body)
 			cmds := []string{"set","redis_statistics",string(json)}
 			SendCommand(cmds)
@@ -254,6 +260,7 @@ type JsonBody struct {
 	StartTime string
 	EndTime string
 	Regexp string
+	OperateSumCount int64
 	Data []Statis
 }
 
@@ -355,6 +362,7 @@ func readConfig() map[string]string {
 
 func statisticsLog(logs string)  {
 	logs = strings.ToLower(logs)
+	operateSum = operateSum + 1
 	if logs == ""{
 		return
 	}
