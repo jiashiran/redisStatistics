@@ -1,5 +1,5 @@
 # redisStatistics
-redis日志统计，统计redis某些操作的次数,统计slowlog
+redis日志统计，统计redis某些操作的次数，统计slowlog
 
 编译说明：通过交叉编译，可以编译得到3种操作系统的版本
 
