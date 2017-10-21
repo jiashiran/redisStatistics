@@ -80,13 +80,24 @@ func startMonitorSlowlog(resp http.ResponseWriter,req *http.Request)  {
 }
 
 func getSlowlog(resp http.ResponseWriter,req *http.Request)  {
-	sendSelect(client,9)
-	r, err := client.Do("get", "slowlogs")
+	file,err := os.OpenFile("monitorSlowlog.log",os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil{
-		log.Println("getSlowlog err:",err)
+		fmt.Println(err)
 	}
-
-	io.WriteString(resp,fmt.Sprintln(r))
+	var logger *log.Logger = log.New(file,"[info]",log.LstdFlags)
+	addrsConfig := config["slowlogAddrs"]
+	addrs := strings.Split(addrsConfig,";")
+	for _,addr := range addrs{
+		var client *goredis.Client = goredis.NewClient(addr, "",logger)
+		client.SetMaxIdleConns(1)
+		defer client.Close()
+		sendSelect(client,9)
+		r, err := client.Do("get", "slowlogs")
+		if err != nil{
+			log.Println("getSlowlog err:",err)
+		}
+		io.WriteString(resp,addr + "：" + fmt.Sprintf("%s", r))
+	}
 }
 
 

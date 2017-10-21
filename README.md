@@ -1,5 +1,5 @@
 # redisStatistics
-redis日志统计，统计redis某些操作的次数
+redis日志统计，统计redis某些操作的次数,统计slowlog
 
 编译说明：通过交叉编译，可以编译得到3种操作系统的版本
 
@@ -55,6 +55,18 @@ http://172.16.203.194:8080/stop
 查看统计信息：
 ```
 http://172.16.203.194:8080/info
+
+```
+
+打开统计slowlog：
+```
+http://172.16.203.194:8080/startMonitorSlowlog
+
+```
+
+查看slowlog信息：
+```
+http://172.16.203.194:8080/getSlowlog
 
 ```
 
