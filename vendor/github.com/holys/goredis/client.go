@@ -120,14 +120,14 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 	var co *Conn
 	var err error
 	if c == nil || c.addr == ""{
-		log.Println("client 已关闭")
+		c.logger.Println("client 已关闭")
 		return nil
 	}
 	c.closed = false
 	co, err = c.newConn(c.addr, c.password)//改造，监控自己创建连接，连接断开后重新创建
 	//co, err = c.get()//old code
 	if err != nil {
-		log.Println("Monitor create conn error,",err)
+		c.logger.Println("Monitor create conn error,",err)
 		return err
 	}
 
@@ -183,7 +183,7 @@ func (c *Client) Close() {
 		e := c.conns.Front()
 		co := e.Value.(*Conn)
 		c.conns.Remove(e)
-		log.Println("close3")
+		c.logger.Println("close3")
 		co.Close()
 	}
 }
@@ -202,7 +202,7 @@ func (c *Client) get() (co *Conn, err error) {
 	if c.conns.Len() == 0 {
 		c.Unlock()
 		co, err = c.newConn(c.addr, c.password)
-		log.Println("new Con")
+		c.logger.Println("new Con")
 	} else {
 		e := c.conns.Front()
 		co = e.Value.(*Conn)
@@ -226,7 +226,7 @@ func (c *Client) put(conn *Conn) {
 		e := c.conns.Back()
 		co := e.Value.(*Conn)
 		c.conns.Remove(e)
-		log.Println("close2")
+		c.logger.Println("close2")
 		co.Close()
 	}
 
@@ -255,7 +255,7 @@ func (c *Client) checkIdle() {
 
 	_, err := co.Do("PING")
 	if err != nil {
-		log.Println("close1")
+		c.logger.Println("close1")
 		co.Close()
 
 	} else {

@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"errors"
-	//"reflect"
+	"redisStatistics/sl"
 )
 
 //output
@@ -68,8 +68,27 @@ func main() {
 	http.HandleFunc("/start",start)
 	http.HandleFunc("/stop",stop)
 	http.HandleFunc("/info",info)
+	http.HandleFunc("/startMonitorSlowlog",startMonitorSlowlog)
+	http.HandleFunc("/getSlowlog",getSlowlog)
 	http.ListenAndServe(":"+httpPort,nil)
+
 }
+
+func startMonitorSlowlog(resp http.ResponseWriter,req *http.Request)  {
+	sl.StartMonitorSlowlog(config["slowlogAddrs"])
+	io.WriteString(resp,"开始统计slowlog")
+}
+
+func getSlowlog(resp http.ResponseWriter,req *http.Request)  {
+	sendSelect(client,9)
+	r, err := client.Do("get", "slowlogs")
+	if err != nil{
+		log.Println("getSlowlog err:",err)
+	}
+
+	io.WriteString(resp,fmt.Sprintln(r))
+}
+
 
 func init()  {
 	config = readConfig()
@@ -192,6 +211,7 @@ func buildMonitorData(config map[string]string)  {
 
 	}
 }
+
 
 func start(resp http.ResponseWriter,req *http.Request)  {
 	defer func() {<-lock}()
