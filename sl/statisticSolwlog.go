@@ -28,7 +28,7 @@ func StartMonitorSlowlog(addresses string)  {
 	if !start && len(addrs)>0{
 		start = true
 		go func() {
-			ticker := time.NewTicker(time.Minute * 2)
+			ticker := time.NewTicker(time.Second * 10)
 			for {
 				select {
 				case <-ticker.C:
@@ -41,6 +41,22 @@ func StartMonitorSlowlog(addresses string)  {
 	}
 }
 
+func getSlowlog(client *goredis.Client,logger *log.Logger) []slowLog  {
+	r, err := client.Do("get", "slowlogs")
+	if err != nil{
+		logger.Println("getSlowlog err:",err)
+	}
+	slowLogs := fmt.Sprintf("%s", r)
+	//logger.Println(slowLogs)
+	slowlog := make([]slowLog,0,0)
+	err = json.Unmarshal([]byte(slowLogs),&slowlog)
+	if err != nil{
+		logger.Println("Unmarshal err:",err)
+	}
+	//logger.Println("olgSlowlogs:",slowlog)
+	return slowlog
+}
+
 func statisticSlowlog(addr string)  {
 	file,err := os.OpenFile("monitorSlowlog.log",os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil{
@@ -50,11 +66,11 @@ func statisticSlowlog(addr string)  {
 	var client *goredis.Client = goredis.NewClient(addr, "",logger)
 	client.SetMaxIdleConns(1)
 	defer client.Close()
+	sendSelect(client,9,logger)
 	slowLogs := getSlowLogs(client,logger)
 	if len(slowLogs) > 100{
 		slowLogs = slowLogs[0:100]
 	}
-	sendSelect(client,9,logger)
 	bs,_:=json.Marshal(slowLogs)
 	r,err := client.Do("set","slowlogs",string(bs))
 	if err != nil{
@@ -69,7 +85,7 @@ func statisticSlowlog(addr string)  {
 }
 
 func getSlowLogs(client *goredis.Client,logger *log.Logger) []slowLog {
-	r, err := client.Do("slowlog", "get","1000")
+	r, err := client.Do("slowlog", "get","10000")
 	if err != nil{
 		logger.Println("err:",err)
 	}
@@ -121,16 +137,23 @@ func getSlowLogs(client *goredis.Client,logger *log.Logger) []slowLog {
 		}
 
 	}
+	oldSlowlogs := getSlowlog(client,logger)
+	slowlogs = append(slowlogs,oldSlowlogs...)
 	sort.Slice(slowlogs, func(i, j int) bool {
 		return slowlogs[i].Time > slowlogs[j].Time
 	})
-	logger.Println("commonds:",commonds)
-	logger.Println("slowlogs:",slowlogs)
-	/*r, err = client.Do("slowlog", "reset")
-	if err != nil{
-		log.Println("err:",err)
+	//logger.Println("commonds:",commonds)
+	if len(slowlogs) > 10{
+		logger.Println("slowlogs:",slowlogs[0:10])
+	}else {
+		logger.Println("slowlogs:",slowlogs)
 	}
-	log.Println(r)*/
+
+	r, err = client.Do("slowlog", "reset")
+	if err != nil{
+		logger.Println("err:",err)
+	}
+	logger.Println(r)
 	return slowlogs
 }
 
