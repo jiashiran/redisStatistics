@@ -28,7 +28,7 @@ func StartMonitorSlowlog(addresses string)  {
 	if !start && len(addrs)>0{
 		start = true
 		go func() {
-			ticker := time.NewTicker(time.Second * 10)
+			ticker := time.NewTicker(time.Minute * 2)
 			for {
 				select {
 				case <-ticker.C:
