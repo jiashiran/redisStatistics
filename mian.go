@@ -258,7 +258,7 @@ func saveStatistics() {
 						logger.Println("				count:", v)
 					}
 					if v.totalCount > 0 {
-						statises = append(statises, Statis{s.index, s.ip, s.option, strconv.FormatInt(v.totalCount, 10), v.count})
+						statises = append(statises, Statis{s.index, s.ip, s.option, v.totalCount, v.count})
 						if !debug {
 							logger.Println("daIndex:", s.index)
 							logger.Println("		ip:", s.ip)
@@ -267,9 +267,7 @@ func saveStatistics() {
 						}
 					}
 				}
-				sort.SliceIsSorted(statises, func(i, j int) bool {
-					return statises[i].TotalCount > statises[j].TotalCount
-				})
+				sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
 				sendSelect(client, saveIndex)
 				body := JsonBody{
 					StartTime:       startTime,
@@ -303,7 +301,7 @@ type Statis struct {
 	Dbindex    string
 	Ip         string
 	Option     string
-	TotalCount string
+	TotalCount int64
 	Regexps    map[string]int64
 }
 
