@@ -81,7 +81,7 @@ http://172.16.203.194:8080/getSlowlog
 | Dbindex          | 数据库id   |
 | Ip       | 操作请求来源ip   |
 | Option      | 操作命令   |
-| Regexps | 用正则表达式匹配命令命中，操作次数   |
+| Regexps | 用正则表达式匹配命令命中，操作次数 是key,value格式，key是匹配的正则，value是操作次数   |
 
 例：
 ```
