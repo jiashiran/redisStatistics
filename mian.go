@@ -41,7 +41,7 @@ var (
 	debug       bool
 	logger      *log.Logger
 	httpPort    string
-	config      map[string]string
+	config      map[string]string  //conf中的配置数据
 	startTime   string
 	operateSum  int64
 )
@@ -433,7 +433,7 @@ func statisticsLog(logs string) {
 				}
 			}
 		}
-	}else {//根据配置未匹配到日志，新建一项统计，entity=false
+	}else if config["mode"] == "all" {//根据配置未匹配到日志，新建一项统计，entity=false
 		monitorDara[s] = &tally{false, 1, make(map[string]int64)}
 	}
 	s.ip = string([]rune(l1[2])[0 : len([]rune(l1[2]))-1])
