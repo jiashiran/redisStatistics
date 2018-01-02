@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"sort"
+	"sync"
 )
 
 //output
@@ -32,7 +33,7 @@ var (
 	closeChan   chan struct{}
 	stopTicket  chan int
 	data        map[statistics]int64
-	monitorDara map[statistics]*tally
+	monitorDara *sync.Map
 	saveIndex   int
 	regexps     string
 	reg         []*regexp.Regexp
@@ -44,6 +45,8 @@ var (
 	config      map[string]string  //conf中的配置数据
 	startTime   string
 	operateSum  int64
+	queueSize   = 1000000
+	queue		chan string
 )
 
 type statistics struct {
@@ -66,6 +69,7 @@ func main() {
 	stopTicket = make(chan int)
 	closeChan = make(chan struct{})
 	lock = make(chan int, 1)
+	queue = make(chan string,queueSize)
 	http.HandleFunc("/start", start)
 	http.HandleFunc("/stop", stop)
 	http.HandleFunc("/info", info)
@@ -169,7 +173,7 @@ func info(resp http.ResponseWriter, req *http.Request) {
 }
 
 func buildMonitorData(config map[string]string) {
-	monitorDara = make(map[statistics]*tally)
+	monitorDara = new(sync.Map)
 	var dbindexs []string
 	var ips []string
 	var options []string
@@ -202,7 +206,7 @@ func buildMonitorData(config map[string]string) {
 				var s statistics = statistics{}
 				s.index = index
 				s.option = option
-				monitorDara[s] = &tally{true, 0, make(map[string]int64)}
+				monitorDara.LoadOrStore(s,&tally{true, 0, make(map[string]int64)})
 				logger.Println("1", s)
 			}
 		} else {
@@ -213,7 +217,7 @@ func buildMonitorData(config map[string]string) {
 					s.index = index
 					s.ip = ip
 					s.option = option
-					monitorDara[s] = &tally{true, 0, make(map[string]int64)}
+					monitorDara.LoadOrStore(s,&tally{true, 0, make(map[string]int64)})
 					//logger.Println("2",s)
 				}
 
@@ -235,6 +239,12 @@ func start(resp http.ResponseWriter, req *http.Request) {
 	connect()
 	go monitor()
 	go saveStatistics()
+	go func() {
+		//statisticsLog(reply)
+		for v := range queue{
+			statisticsLog(v)
+		}
+	}()
 	logger.Println("start monitor")
 	if startTime == "" {
 		startTime = time.Now().Format("2006-01-02 15:04:05")
@@ -250,7 +260,9 @@ func saveStatistics() {
 		case <-ticker.C:
 			{
 				statises := []Statis{}
-				for s, v := range monitorDara {
+				monitorDara.Range(func(key, value interface{}) bool {
+					s,_ := key.(statistics)
+					v,_ := value.(tally)
 					if debug {
 						logger.Println("daIndex:", s.index)
 						logger.Println("		ip:", s.ip)
@@ -266,6 +278,10 @@ func saveStatistics() {
 							logger.Println("				count:", v)
 						}
 					}
+					return true
+				})
+				if len(statises) == 0{
+					return
 				}
 				sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
 				sendSelect(client, saveIndex)
@@ -283,6 +299,7 @@ func saveStatistics() {
 		case <-stopTicket:
 			{
 				logger.Println("stop ticker")
+				ticker.Stop()
 				return
 			}
 		}
@@ -333,6 +350,7 @@ func stop(resp http.ResponseWriter, req *http.Request) {
 	go func() { closeChan <- struct{}{} }()
 	stopTicket <- 1
 	client.Close()
+	client = nil
 }
 
 func connect() {
@@ -412,7 +430,8 @@ func statisticsLog(logs string) {
 			logger.Println("err", err)
 		}
 	}()
-	if mdata, ok := monitorDara[s]; ok {
+	if value, ok := monitorDara.Load(s); ok {
+		mdata,_ := value.(tally)
 		mdata.totalCount = mdata.totalCount + 1 //记录操作总数
 		if mdata.entity && len(l1) > 4 {
 			for i := 3; i < len(l1) && i < 6; i++ {
@@ -432,10 +451,11 @@ func statisticsLog(logs string) {
 			}
 		}
 	}else if config["mode"] == "all" {//根据配置未匹配到日志，新建一项统计，entity=false
-		monitorDara[s] = &tally{false, 1, make(map[string]int64)}
+		monitorDara.LoadOrStore(s,&tally{false, 1, make(map[string]int64)})
 	}
 	s.ip = string([]rune(l1[2])[0 : len([]rune(l1[2]))-1])
-	if mdata, ok := monitorDara[s]; ok {
+	if value, ok := monitorDara.Load(s); ok {
+		mdata,_ := value.(tally)
 		mdata.totalCount = mdata.totalCount + 1 //记录操作总数
 		if len(l1) > 4 {
 			for i := 3; i < len(l1) && i < 6; i++ {
@@ -525,7 +545,12 @@ func printRawReply(level int, reply interface{}) {
 		logger.Printf("%d --------1", reply)
 	case string:
 		{
-			statisticsLog(reply)
+			//statisticsLog(reply)
+			if len(queue) < queueSize{
+				queue <- reply
+			}else {
+				log.Println("queue if full,log:",reply)
+			}
 		}
 	case []byte:
 		logger.Printf("%s --------2", reply)
