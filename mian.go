@@ -18,6 +18,7 @@ import (
 	"time"
 	"sort"
 	"sync"
+	"runtime"
 )
 
 //output
@@ -239,12 +240,24 @@ func start(resp http.ResponseWriter, req *http.Request) {
 	connect()
 	go monitor()
 	go saveStatistics()
-	go func() {
-		//statisticsLog(reply)
-		for v := range queue{
-			statisticsLog(v)
+	cpuNum := runtime.NumCPU()
+	handlerLogRoutineCount := config["handlerLogRoutineCount"]
+	if handlerLogRoutineCount != ""{
+		var err error
+		cpuNum,err = strconv.Atoi(handlerLogRoutineCount)
+		if err != nil{
+			log.Fatalln("handlerLogRoutineCount is error:",err)
 		}
-	}()
+	}
+	log.Println("cpuNum:",cpuNum)
+	for i:=1;i<=cpuNum;i++{
+		go func() {
+			//statisticsLog(reply)
+			for v := range queue{
+				statisticsLog(v)
+			}
+		}()
+	}
 	logger.Println("start monitor")
 	if startTime == "" {
 		startTime = time.Now().Format("2006-01-02 15:04:05")

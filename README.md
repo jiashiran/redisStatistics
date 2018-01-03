@@ -34,6 +34,7 @@ go build -o redisStatistics-mac-amd64
 | saveToIndex | 可选   | 统计结果保存的redis数据库，不配置默认为0                  | 2                   |
 | httpPort    | 可选   | 控制打开或关闭监控的rest接口的端口，不配置默认为8080           |                     |
 | logFlag     | 可选   | 日志模式，可配置info,debug,file，不配置默认为info,file模式日志输出到文件 |                     |
+| handlerLogRoutineCount     | 可选   | 处理日志的goroutine数量，默认是cpu的核数 |                     |
 
 
 打开监控：
