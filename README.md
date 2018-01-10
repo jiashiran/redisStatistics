@@ -21,7 +21,7 @@ mac：环境变量 GOOS=darwin，GOARCH=amd64
 go build -o redisStatistics-mac-amd64
 ```
 
-配置说明：
+statistics.conf配置说明：
 
 | 字段          | 可选   | 描述                                       | 例子                  |
 | ----------- | ---- | ---------------------------------------- | ------------------- |

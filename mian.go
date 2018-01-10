@@ -19,6 +19,8 @@ import (
 	"sort"
 	"sync"
 	"runtime"
+	"sync/atomic"
+	"redisStatistics/utils"
 )
 
 //output
@@ -61,7 +63,7 @@ type tally struct {
 	entity bool  //标记是否是通过配置需要匹配的统计，非配置里的也会统计值是false
 	//option string `命令`
 	totalCount int64            `总数`
-	count      map[string]int64 `根据正则表达式匹配总数`
+	count      *sync.Map //map[string]int64 `根据正则表达式匹配总数`
 }
 
 func main() {
@@ -207,7 +209,8 @@ func buildMonitorData(config map[string]string) {
 				var s statistics = statistics{}
 				s.index = index
 				s.option = option
-				monitorDara.LoadOrStore(s,&tally{true, 0, make(map[string]int64)})
+				counts := new(sync.Map)
+				monitorDara.Store(s,&tally{true, 0, counts})
 				logger.Println("1", s)
 			}
 		} else {
@@ -218,7 +221,8 @@ func buildMonitorData(config map[string]string) {
 					s.index = index
 					s.ip = ip
 					s.option = option
-					monitorDara.LoadOrStore(s,&tally{true, 0, make(map[string]int64)})
+					counts := new(sync.Map)
+					monitorDara.Store(s,&tally{true, 0, counts})
 					//logger.Println("2",s)
 				}
 
@@ -272,10 +276,11 @@ func saveStatistics() {
 		select {
 		case <-ticker.C:
 			{
+				logger.Println("start save statistic")
 				statises := []Statis{}
 				monitorDara.Range(func(key, value interface{}) bool {
 					s,_ := key.(statistics)
-					v,_ := value.(tally)
+					v,_ := value.(*tally)
 					if debug {
 						logger.Println("daIndex:", s.index)
 						logger.Println("		ip:", s.ip)
@@ -283,7 +288,13 @@ func saveStatistics() {
 						logger.Println("				count:", v)
 					}
 					if v.totalCount > 0 {
-						statises = append(statises, Statis{s.index, s.ip, s.option, v.totalCount, v.count})
+						countMap := make(map[string]int64)
+
+						v.count.Range(func(c_key, c_value interface{}) bool {
+							countMap[c_key.(string)] = utils.Int64Value(c_value.(*int64))
+							return true
+						})
+						statises = append(statises, Statis{s.index, s.ip, s.option, v.totalCount, countMap})
 						if !debug {
 							logger.Println("daIndex:", s.index)
 							logger.Println("		ip:", s.ip)
@@ -294,7 +305,7 @@ func saveStatistics() {
 					return true
 				})
 				if len(statises) == 0{
-					return
+					continue
 				}
 				sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
 				sendSelect(client, saveIndex)
@@ -444,16 +455,21 @@ func statisticsLog(logs string) {
 		}
 	}()
 	if value, ok := monitorDara.Load(s); ok {
-		mdata,_ := value.(tally)
-		mdata.totalCount = mdata.totalCount + 1 //记录操作总数
+		mdata,_ := value.(*tally)
+		atomic.AddInt64(&mdata.totalCount , 1) //记录操作总数
 		if mdata.entity && len(l1) > 4 {
 			for i := 3; i < len(l1) && i < 6; i++ {
 				var param string = l1[i]
 				for _, rege := range reg {
 					//logger.Println(rege,param)
 					if finsStr := rege.FindString(param); finsStr != "" {
-						count := mdata.count[rege.String()]
-						mdata.count[rege.String()] = count + 1
+						countMap := mdata.count
+						countMap_value,ok := countMap.Load(rege.String())
+						if ok{
+							atomic.AddInt64(countMap_value.(*int64),1)
+						}else {
+							countMap.Store(rege.String(),utils.Int64(1))
+						}
 						if debug {
 							logger.Println("regexp:", finsStr)
 						}
@@ -464,19 +480,24 @@ func statisticsLog(logs string) {
 			}
 		}
 	}else if config["mode"] == "all" {//根据配置未匹配到日志，新建一项统计，entity=false
-		monitorDara.LoadOrStore(s,&tally{false, 1, make(map[string]int64)})
+		monitorDara.Store(s,&tally{false, 1, new(sync.Map)})
 	}
 	s.ip = string([]rune(l1[2])[0 : len([]rune(l1[2]))-1])
 	if value, ok := monitorDara.Load(s); ok {
-		mdata,_ := value.(tally)
-		mdata.totalCount = mdata.totalCount + 1 //记录操作总数
+		mdata,_ := value.(*tally)
+		atomic.AddInt64(&mdata.totalCount , 1) //记录操作总数
 		if len(l1) > 4 {
 			for i := 3; i < len(l1) && i < 6; i++ {
 				var param string = l1[i]
 				for _, rege := range reg {
 					if finsStr := rege.FindString(param); finsStr != "" {
-						count := mdata.count[rege.String()]
-						mdata.count[rege.String()] = count + 1
+						countMap := mdata.count
+						countMap_value,ok := countMap.Load(rege.String())
+						if ok{
+							atomic.AddInt64(countMap_value.(*int64),1)
+						}else {
+							countMap.Store(rege.String(),utils.Int64(1))
+						}
 						if debug {
 							logger.Println("regexp:", finsStr)
 						}
