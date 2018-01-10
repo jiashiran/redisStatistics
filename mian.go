@@ -400,7 +400,7 @@ func monitor() {
 
 func readConfig() map[string]string {
 	m := make(map[string]string)
-	file, err := os.Open("redis_statistics.conf")
+	file, err := os.Open("statistics.conf")
 	defer file.Close()
 	if err != nil {
 		logger.Println(err)
