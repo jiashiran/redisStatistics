@@ -33,7 +33,8 @@ var (
 	mode        int
 	host        string
 	client      *goredis.Client
-	closeChan   chan struct{}
+	closeChan   chan int
+	respChan    chan interface{}
 	stopTicket  chan int
 	data        map[statistics]int64
 	monitorDara *sync.Map
@@ -47,9 +48,13 @@ var (
 	httpPort    string
 	config      map[string]string  //conf中的配置数据
 	startTime   string
-	operateSum  int64
+	operateSum  *int64
 	queueSize   = 1000000
 	queue		chan string
+	mapLock     sync.Mutex
+	matchLock   sync.Mutex
+	statisticsGrotuneCount int
+	statisticsStopChan	chan int
 )
 
 type statistics struct {
@@ -62,7 +67,7 @@ type statistics struct {
 type tally struct {
 	entity bool  //标记是否是通过配置需要匹配的统计，非配置里的也会统计值是false
 	//option string `命令`
-	totalCount int64            `总数`
+	totalCount *int64            `总数`
 	count      *sync.Map //map[string]int64 `根据正则表达式匹配总数`
 }
 
@@ -70,7 +75,7 @@ func main() {
 	buildMonitorData(config) //初始化需要监控的数据
 	data = make(map[statistics]int64)
 	stopTicket = make(chan int)
-	closeChan = make(chan struct{})
+	closeChan = make(chan int)
 	lock = make(chan int, 1)
 	queue = make(chan string,queueSize)
 	http.HandleFunc("/start", start)
@@ -109,9 +114,14 @@ func getSlowlog(resp http.ResponseWriter, req *http.Request) {
 }
 
 func init() {
+	statisticsStopChan = make(chan int)
+	Init()
+}
+
+func Init()  {
 	config = readConfig()
 	logFlag := config["logFlag"]
-
+	operateSum = utils.Int64(0)
 	// 创建一个日志对象
 	if logFlag != "" && logFlag == "file" {
 		// 定义一个文件
@@ -159,21 +169,7 @@ func init() {
 	}
 }
 
-func info(resp http.ResponseWriter, req *http.Request) {
-	if !started {
-		io.WriteString(resp, "未连接")
-		return
-	}
-	sendSelect(client, saveIndex)
-	cmds := []string{"get", "redis_statistics"}
-	r, err := SendCommand(cmds)
-	if err != nil {
-		log.Println(err)
-	}
-	//value := reflect.ValueOf(r)
-	//logger.Println(value)
-	io.WriteString(resp, fmt.Sprintf("%s", r))
-}
+
 
 func buildMonitorData(config map[string]string) {
 	monitorDara = new(sync.Map)
@@ -210,7 +206,7 @@ func buildMonitorData(config map[string]string) {
 				s.index = index
 				s.option = option
 				counts := new(sync.Map)
-				monitorDara.Store(s,&tally{true, 0, counts})
+				monitorDara.Store(s,&tally{true, utils.Int64(0), counts})
 				logger.Println("1", s)
 			}
 		} else {
@@ -222,7 +218,7 @@ func buildMonitorData(config map[string]string) {
 					s.ip = ip
 					s.option = option
 					counts := new(sync.Map)
-					monitorDara.Store(s,&tally{true, 0, counts})
+					monitorDara.Store(s,&tally{true, utils.Int64(0), counts})
 					//logger.Println("2",s)
 				}
 
@@ -230,6 +226,22 @@ func buildMonitorData(config map[string]string) {
 		}
 
 	}
+}
+
+func info(resp http.ResponseWriter, req *http.Request) {
+	addr := host
+	infoClient := goredis.NewClient(addr, "", logger)
+	infoClient.SetMaxIdleConns(1)
+	sendSelect(infoClient, saveIndex)
+	cmds := []string{"get", "redis_statistics"}
+	r, err := SendCommand(infoClient,cmds)
+	if err != nil {
+		log.Println(err)
+	}
+	//value := reflect.ValueOf(r)
+	//logger.Println(value)
+	infoClient.Close()
+	io.WriteString(resp, fmt.Sprintf("%s", r))
 }
 
 func start(resp http.ResponseWriter, req *http.Request) {
@@ -241,6 +253,9 @@ func start(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 	started = true
+	Init()
+	buildMonitorData(config)
+	runtime.GC()
 	connect()
 	go monitor()
 	go saveStatistics()
@@ -256,9 +271,22 @@ func start(resp http.ResponseWriter, req *http.Request) {
 	log.Println("cpuNum:",cpuNum)
 	for i:=1;i<=cpuNum;i++{
 		go func() {
-			//statisticsLog(reply)
-			for v := range queue{
-				statisticsLog(v)
+			statisticsGrotuneCount = 0
+			statisticsGrotuneCount++
+			log.Println("start new statistics goroutine:",i)
+			for{
+				select {
+				case v:= <- queue:{
+					if !started {
+						break
+					}
+					statisticsLog(v)
+				}
+				case i := <- statisticsStopChan:{
+					log.Println("stop statistics goroutine:",i)
+					return
+				}
+				}
 			}
 		}()
 	}
@@ -270,54 +298,49 @@ func start(resp http.ResponseWriter, req *http.Request) {
 
 }
 
+func stop(resp http.ResponseWriter, req *http.Request) {
+	if !started {
+		logger.Println("mointor has stopped")
+		io.WriteString(resp, "已关闭统计1")
+		return
+	}
+	close(respChan)
+	defer func() {
+		for  ; statisticsGrotuneCount >= 0 ; statisticsGrotuneCount--{
+			statisticsStopChan <- statisticsGrotuneCount
+		}
+	}()
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Println("stop info", err)
+		}
+	}()
+	defer func() {
+		<-lock
+		client = nil
+		io.WriteString(resp, "已关闭统计")
+	}()
+	lock <- 1
+	started = false
+	closeChanLen := len(closeChan)
+	log.Println("closeChanLen:", closeChanLen)
+	stopTicket <- 1
+	sendSelect(client, saveIndex)
+	timeout := 60 * 60 //单位秒
+	buildAndSave()
+	cmds := []string{"expire", "redis_statistics", strconv.Itoa(timeout)}
+	SendCommand(client,cmds)
+	client.Close()
+	client = nil
+}
+
 func saveStatistics() {
 	ticker := time.NewTicker(time.Minute * 1)
 	for {
 		select {
 		case <-ticker.C:
 			{
-				logger.Println("start save statistic")
-				statises := []Statis{}
-				monitorDara.Range(func(key, value interface{}) bool {
-					s,_ := key.(statistics)
-					v,_ := value.(*tally)
-					if debug {
-						logger.Println("daIndex:", s.index)
-						logger.Println("		ip:", s.ip)
-						logger.Println("			option:", s.option)
-						logger.Println("				count:", v)
-					}
-					if v.totalCount > 0 {
-						countMap := make(map[string]int64)
-
-						v.count.Range(func(c_key, c_value interface{}) bool {
-							countMap[c_key.(string)] = utils.Int64Value(c_value.(*int64))
-							return true
-						})
-						statises = append(statises, Statis{s.index, s.ip, s.option, v.totalCount, countMap})
-						if !debug {
-							logger.Println("daIndex:", s.index)
-							logger.Println("		ip:", s.ip)
-							logger.Println("			option:", s.option)
-							logger.Println("				count:", v)
-						}
-					}
-					return true
-				})
-				if len(statises) == 0{
-					continue
-				}
-				sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
-				sendSelect(client, saveIndex)
-				body := JsonBody{
-					StartTime:       startTime,
-					EndTime:         time.Now().Format("2006-01-02 15:04:05"),
-					OperateSumCount: operateSum,
-					Regexp:          regexps, Data: statises,
-				}
-				json, _ := json.Marshal(body)
-				cmds := []string{"set", "redis_statistics", string(json)}
-				SendCommand(cmds)
+				buildAndSave()
 
 			}
 		case <-stopTicket:
@@ -328,6 +351,57 @@ func saveStatistics() {
 			}
 		}
 	}
+}
+
+func buildAndSave()  {
+	logger.Println("start save statistic")
+	sum := utils.Int64Value(operateSum)
+	statises := getStatisticsData(*monitorDara)
+	if len(statises) == 0{
+		return
+	}
+	sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
+	sendSelect(client, saveIndex)
+	body := JsonBody{
+		StartTime:       startTime,
+		EndTime:         time.Now().Format("2006-01-02 15:04:05"),
+		OperateSumCount: sum,
+		Regexp:          regexps, Data: statises,
+	}
+	json, _ := json.Marshal(body)
+	cmds := []string{"set", "redis_statistics", string(json)}
+	SendCommand(client,cmds)
+}
+
+func getStatisticsData(monitorDara sync.Map)[]Statis  {
+	statises := []Statis{}
+	monitorDara.Range(func(key, value interface{}) bool {
+		s,_ := key.(statistics)
+		v,_ := value.(*tally)
+		if debug {
+			logger.Println("daIndex:", s.index)
+			logger.Println("		ip:", s.ip)
+			logger.Println("			option:", s.option)
+			logger.Println("				count:", v)
+		}
+		if *v.totalCount > 0 {
+			countMap := make(map[string]int64)
+
+			v.count.Range(func(c_key, c_value interface{}) bool {
+				countMap[c_key.(string)] = utils.Int64Value(c_value.(*int64))
+				return true
+			})
+			statises = append(statises, Statis{s.index, s.ip, s.option, *v.totalCount, countMap})
+			if !debug {
+				logger.Println("daIndex:", s.index)
+				logger.Println("		ip:", s.ip)
+				logger.Println("			option:", s.option)
+				logger.Println("				count:", v)
+			}
+		}
+		return true
+	})
+	return statises
 }
 
 type JsonBody struct {
@@ -347,35 +421,7 @@ type Statis struct {
 }
 
 
-func stop(resp http.ResponseWriter, req *http.Request) {
-	if !started {
-		logger.Println("mointor has stopped")
-		io.WriteString(resp, "已关闭统计")
-		return
-	}
-	sendSelect(client, saveIndex)
-	timeout := 60 * 60 //单位秒
-	cmds := []string{"expire", "redis_statistics", strconv.Itoa(timeout)}
-	SendCommand(cmds)
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Println("stop info", err)
-		}
-	}()
-	defer func() {
-		<-lock
-		client = nil
-		io.WriteString(resp, "已关闭统计")
-	}()
-	lock <- 1
-	started = false
-	closeChanLen := len(closeChan)
-	log.Println("closeChanLen:", closeChanLen)
-	go func() { closeChan <- struct{}{} }()
-	stopTicket <- 1
-	client.Close()
-	client = nil
-}
+
 
 func connect() {
 	if client == nil {
@@ -386,9 +432,9 @@ func connect() {
 }
 
 func monitor() {
-	respChan := make(chan interface{})
+	respChan = make(chan interface{})
 	stopChan := make(chan struct{})
-	err := client.Monitor(respChan, stopChan, closeChan)
+	err := client.Monitor(respChan, stopChan, &closeChan)
 	if err != nil {
 		logger.Printf("(error) %s\n", err.Error())
 		return
@@ -400,9 +446,10 @@ func monitor() {
 		case mr := <-respChan:
 			printReply(0, mr, mode)
 			//logger.Printf("\n")
-		case <-stopChan:
+		case <- stopChan:
 			logger.Println("Error: Server closed the connection")
 			started = false
+			close(stopChan)
 			return
 		}
 	}
@@ -437,14 +484,15 @@ func readConfig() map[string]string {
 
 func statisticsLog(logs string) {
 	logs = strings.ToLower(logs)
-	operateSum = operateSum + 1
 	if logs == "" {
 		return
 	}
 	l1 := strings.Split(logs, " ")
 	if len(l1) < 4 {
+		log.Println("error log:",l1)
 		return
 	}
+	atomic.AddInt64(operateSum , 1)
 	var s statistics
 	s.index = string([]rune(l1[1])[1:])
 	s.option = strings.Replace(l1[3], "\"", "", -1)
@@ -456,57 +504,24 @@ func statisticsLog(logs string) {
 	}()
 	if value, ok := monitorDara.Load(s); ok {
 		mdata,_ := value.(*tally)
-		atomic.AddInt64(&mdata.totalCount , 1) //记录操作总数
-		if mdata.entity && len(l1) > 4 {
-			for i := 3; i < len(l1) && i < 6; i++ {
-				var param string = l1[i]
-				for _, rege := range reg {
-					//logger.Println(rege,param)
-					if finsStr := rege.FindString(param); finsStr != "" {
-						countMap := mdata.count
-						countMap_value,ok := countMap.Load(rege.String())
-						if ok{
-							atomic.AddInt64(countMap_value.(*int64),1)
-						}else {
-							countMap.Store(rege.String(),utils.Int64(1))
-						}
-						if debug {
-							logger.Println("regexp:", finsStr)
-						}
-						//logger.Println("reg",param)
-						break
-					}
-				}
-			}
-		}
+		matchFilter(mdata,l1)
 	}else if config["mode"] == "all" {//根据配置未匹配到日志，新建一项统计，entity=false
-		monitorDara.Store(s,&tally{false, 1, new(sync.Map)})
+		mapLock.Lock()
+		if value, ok := monitorDara.Load(s); ok {
+			mdata,_ := value.(*tally)
+			matchFilter(mdata,l1)
+		}else {
+			mdata := &tally{false, utils.Int64(0), new(sync.Map)}
+			matchFilter(mdata,l1)
+			monitorDara.Store(s,mdata)
+		}
+		mapLock.Unlock()
 	}
+
 	s.ip = string([]rune(l1[2])[0 : len([]rune(l1[2]))-1])
 	if value, ok := monitorDara.Load(s); ok {
 		mdata,_ := value.(*tally)
-		atomic.AddInt64(&mdata.totalCount , 1) //记录操作总数
-		if len(l1) > 4 {
-			for i := 3; i < len(l1) && i < 6; i++ {
-				var param string = l1[i]
-				for _, rege := range reg {
-					if finsStr := rege.FindString(param); finsStr != "" {
-						countMap := mdata.count
-						countMap_value,ok := countMap.Load(rege.String())
-						if ok{
-							atomic.AddInt64(countMap_value.(*int64),1)
-						}else {
-							countMap.Store(rege.String(),utils.Int64(1))
-						}
-						if debug {
-							logger.Println("regexp:", finsStr)
-						}
-						//logger.Println("reg",param)
-						break
-					}
-				}
-			}
-		}
+		matchFilter(mdata,l1)
 	}
 	/*if len(l1) > 4{  //set param
 		s.param = [3]string{}
@@ -524,6 +539,38 @@ func statisticsLog(logs string) {
 			}
 		}
 		logger.Println(s)
+	}
+}
+
+func matchFilter(mdata *tally,l1 []string){
+	atomic.AddInt64(mdata.totalCount , 1) //记录操作总数
+	if mdata.entity && len(l1) > 4 {
+		for i := 3; i < len(l1) && i < 6; i++ {
+			var param string = l1[i]
+			for _, rege := range reg {
+				//logger.Println(rege,param)
+				if finsStr := rege.FindString(param); finsStr != "" {
+					countMap := mdata.count
+					countMap_value,ok := countMap.Load(rege.String())
+					if ok{
+						atomic.AddInt64(countMap_value.(*int64),1)
+					}else {
+						matchLock.Lock()
+						if countMap_value,ok := countMap.Load(rege.String());ok{
+							atomic.AddInt64(countMap_value.(*int64),1)
+						}else {
+							countMap.Store(rege.String(),utils.Int64(1))
+						}
+						matchLock.Unlock()
+					}
+					if debug {
+						logger.Println("regexp:", finsStr)
+					}
+					//logger.Println("reg",param)
+					break
+				}
+			}
+		}
 	}
 }
 
@@ -664,7 +711,7 @@ func sendAuth(client *goredis.Client, passwd string) error {
 	return nil
 }
 
-func SendCommand(cmds []string) (interface{}, error) {
+func SendCommand(client *goredis.Client,cmds []string) (interface{}, error) {
 	if len(cmds) == 0 {
 		return nil, errors.New("agrs is null")
 	}

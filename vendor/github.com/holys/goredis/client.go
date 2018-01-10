@@ -116,7 +116,7 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 	return nil, err
 }
 
-func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},closeChan chan struct{}) error {
+func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},closeChan *chan int) error {
 	var co *Conn
 	var err error
 	if c == nil || c.addr == ""{
@@ -140,26 +140,37 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 			c.put(co)
 		}()*/
 		defer co.Close()
+		log.Println("start clint resp")
 		for {
 			select {
-			case <- closeChan:{
+			case <- *closeChan:{
 				//co.Close()
 				stopChan <- struct{}{}
-				return
+				log.Println("close m 0")
+				break
 			}
 			default:{
 				resp, err := co.Receive()
 				if err != nil {
 					if e, ok := err.(*net.OpError); ok && strings.Contains(e.Error(), "use of closed network connection 2") || err == io.EOF {
 						//the server may has closed the connection
-						stopChan <- struct{}{}
-						return
+						log.Println("close m 1")
 					}
 					respChan <- err
 				}
 				if c == nil || c.closed {
+					log.Println("close m 2")
+				}
+				defer func() {
+					if err:=recover();err != nil{
+						log.Println("sen respChan err:",err)
+					}
+				}()
+				if _,ok := <- respChan;!ok{
+					log.Println("respChan closed")
 					stopChan <- struct{}{}
-					return
+					log.Println("stop client resp goroutine")
+					break
 				}
 				respChan <- resp
 			}
