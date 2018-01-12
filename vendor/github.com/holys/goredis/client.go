@@ -116,7 +116,7 @@ func (c *Client) Do(cmd string, args ...interface{}) (interface{}, error) {
 	return nil, err
 }
 
-func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},closeChan *chan int) error {
+func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{}) error {
 	var co *Conn
 	var err error
 	if c == nil || c.addr == ""{
@@ -124,8 +124,8 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 		return nil
 	}
 	c.closed = false
-	co, err = c.newConn(c.addr, c.password)//改造，监控自己创建连接，连接断开后重新创建
-	//co, err = c.get()//old code
+	//co, err = c.newConn(c.addr, c.password)//改造，监控自己创建连接，连接断开后重新创建
+	co, err = c.get()//old code
 	if err != nil {
 		c.logger.Println("Monitor create conn error,",err)
 		return err
@@ -143,12 +143,12 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 		log.Println("start clint resp")
 		for {
 			select {
-			case <- *closeChan:{
+			/*case <- *closeChan:{
 				//co.Close()
 				stopChan <- struct{}{}
 				log.Println("close m 0")
 				break
-			}
+			}*/
 			default:{
 				resp, err := co.Receive()
 				if err != nil {
@@ -163,15 +163,16 @@ func (c *Client) Monitor(respChan chan interface{}, stopChan chan struct{},close
 				}
 				defer func() {
 					if err:=recover();err != nil{
+						stopChan <- struct{}{}
 						log.Println("sen respChan err:",err)
 					}
 				}()
-				if _,ok := <- respChan;!ok{
+				/*if _,ok := <- respChan;!ok{
 					log.Println("respChan closed")
 					stopChan <- struct{}{}
 					log.Println("stop client resp goroutine")
 					break
-				}
+				}*/
 				respChan <- resp
 			}
 			}

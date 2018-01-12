@@ -33,7 +33,6 @@ var (
 	mode        int
 	host        string
 	client      *goredis.Client
-	closeChan   chan int
 	respChan    chan interface{}
 	stopTicket  chan int
 	data        map[statistics]int64
@@ -75,7 +74,6 @@ func main() {
 	buildMonitorData(config) //初始化需要监控的数据
 	data = make(map[statistics]int64)
 	stopTicket = make(chan int)
-	closeChan = make(chan int)
 	lock = make(chan int, 1)
 	queue = make(chan string,queueSize)
 	http.HandleFunc("/start", start)
@@ -269,11 +267,11 @@ func start(resp http.ResponseWriter, req *http.Request) {
 		}
 	}
 	log.Println("cpuNum:",cpuNum)
+	statisticsGrotuneCount = 0
 	for i:=1;i<=cpuNum;i++{
-		go func() {
-			statisticsGrotuneCount = 0
+		go func(index int) {
 			statisticsGrotuneCount++
-			log.Println("start new statistics goroutine:",i)
+			log.Println("start new statistics goroutine:",index)
 			for{
 				select {
 				case v:= <- queue:{
@@ -288,12 +286,10 @@ func start(resp http.ResponseWriter, req *http.Request) {
 				}
 				}
 			}
-		}()
+		}(i)
 	}
 	logger.Println("start monitor")
-	if startTime == "" {
-		startTime = time.Now().Format("2006-01-02 15:04:05")
-	}
+	startTime = time.Now().Format("2006-01-02 15:04:05")
 	io.WriteString(resp, "已打开统计")
 
 }
@@ -306,7 +302,8 @@ func stop(resp http.ResponseWriter, req *http.Request) {
 	}
 	close(respChan)
 	defer func() {
-		for  ; statisticsGrotuneCount >= 0 ; statisticsGrotuneCount--{
+		log.Println("statisticsGrotuneCount:",statisticsGrotuneCount)
+		for  ; statisticsGrotuneCount > 0 ; statisticsGrotuneCount--{
 			statisticsStopChan <- statisticsGrotuneCount
 		}
 	}()
@@ -322,8 +319,6 @@ func stop(resp http.ResponseWriter, req *http.Request) {
 	}()
 	lock <- 1
 	started = false
-	closeChanLen := len(closeChan)
-	log.Println("closeChanLen:", closeChanLen)
 	stopTicket <- 1
 	sendSelect(client, saveIndex)
 	timeout := 60 * 60 //单位秒
@@ -361,7 +356,7 @@ func buildAndSave()  {
 		return
 	}
 	sort.SliceStable(statises, func(i, j int) bool {return statises[i].TotalCount > statises[j].TotalCount})
-	sendSelect(client, saveIndex)
+
 	body := JsonBody{
 		StartTime:       startTime,
 		EndTime:         time.Now().Format("2006-01-02 15:04:05"),
@@ -370,7 +365,13 @@ func buildAndSave()  {
 	}
 	json, _ := json.Marshal(body)
 	cmds := []string{"set", "redis_statistics", string(json)}
-	SendCommand(client,cmds)
+	addr := host
+	infoClient := goredis.NewClient(addr, "", logger)
+	infoClient.SetMaxIdleConns(1)
+	sendSelect(infoClient, saveIndex)
+	SendCommand(infoClient,cmds)
+	infoClient.Close()
+	infoClient = nil
 }
 
 func getStatisticsData(monitorDara sync.Map)[]Statis  {
@@ -434,7 +435,7 @@ func connect() {
 func monitor() {
 	respChan = make(chan interface{})
 	stopChan := make(chan struct{})
-	err := client.Monitor(respChan, stopChan, &closeChan)
+	err := client.Monitor(respChan, stopChan)
 	if err != nil {
 		logger.Printf("(error) %s\n", err.Error())
 		return
